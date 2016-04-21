@@ -7,12 +7,53 @@
 #include <Eigen/Dense>
 #include <liegroup.hpp>
 
+#include <snOPT.hpp>
 #include <quadrotor.hpp>
 #include <iostream>
+
+#include <ilqg.hpp>
 
 #include <string>
 int main()
 {
+	double m=0.6;
+	double Ix=8*1e-3; // moment of inertia in X- Y- and Z-axis
+	double Iy=7.5*1e-3;
+	double Iz=13.5*1e-3;
+	double d=0.2; // displacement of rotors
+	double kt=0.6;
+	double km=0.15;
+
+	quadrotor::System sys(Ix,Iy,Iz,m,d,km,kt);
+
+	quadrotor::State state0(Mat4::Identity(), Vec6::Zero());
+	state0.g.block(0,3,3,1)=(Vec3()<<1,1,1).finished();
+	quadrotor::State state_ref(Mat4::Identity(), Vec6::Zero());
+	std::list<quadrotor::State> list_ref(2000, state_ref);
+	std::list<quadrotor::U> list_u0(2000,Vec4::Ones());
+
+	Mat12 M=Mat12::Identity();
+	M.block(3,3,3,3)*=3;
+	M.block(6,6,6,6)*=1e-1;
+	Mat4 R=Mat4::Identity()*1e-2;
+	Mat12 Mf=100*M;
+
+	double dt=0.01;
+	iLQG<quadrotor> ilqg(sys,dt);
+//	iLQG<quadrotor>::Params params;
+	iLQG<quadrotor>::Params params(M,R,Mf);
+
+
+	Vec4 umin=Vec4::Zero();
+	Vec4 umax=Vec4::Ones()*6;
+	
+	ilqg.init(state0, list_u0, list_ref, params, umin, umax,100);
+	std::list<Eigen::Matrix<double,4,12> > list_K;
+	std::list<Vec4> list_ku;
+//	ilqg.backwards(list_K,list_ku);
+	ilqg.evaluate(0.005,20,list_u0);
+	
+/*************************************************************************
 	double m=0.6;
 	double Ix=8*1e-3; // moment of inertia in X- Y- and Z-axis
 	double Iy=7.5*1e-3;

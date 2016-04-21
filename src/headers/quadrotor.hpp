@@ -16,19 +16,13 @@
 #include<Eigen/Dense>
 #include<mat.h>
 #include<liegroup.hpp>
-#include<quadcost.hpp>
 
-#include<quadopt.hpp>
 struct quadrotor
 {
 	public:
 		struct System;
 		struct State;
 		struct DState;
-	
-//	protected:
-		static quadopt optProb;
-
 
 	public:
 		struct System
@@ -60,6 +54,7 @@ struct quadrotor
 
 			State update(const DState & dstate, double h); // compute next state by Euler method
 			static void  save(const std::list<State> &, std::string);
+			static Vec12 diff(State const & state, State const & ref);
 		};
 		
 		struct DState // time derivative of quadrotor state
@@ -81,10 +76,6 @@ struct quadrotor
 		typedef Eigen::Matrix<double, M,1> V;
 		typedef Eigen::Matrix<double, N,1> U;
 
-		static Eigen::Matrix<double,M,1> diff(State const & state, Ref const & ref)
-		{
-			return (Vec12()<<SE3::log(SE3::inverse(ref.g)*state.g), state.v-ref.v).finished();
-		}
 
 		static Eigen::Matrix<double,M,1> f(System const & sys, State const &state)
 		{
@@ -152,314 +143,82 @@ struct quadrotor
 			return ad;
 		}
 
-	protected:
-		static void iLQG_back(           System const & sys,                       double      dt, 
-				               std::list<State> const & list_state0, std::list<U> const & list_u0, std::list<Ref> const & list_ref, 
-							              Mat12 const &           M,         Mat4 const &       R,          Mat12 const &       Mf, 
-							               Vec4 const &        umin,         Vec4 const &    umax,         double const &     alpha, 
-							   std::list<Eigen::Matrix<double,4,12> > & list_K,         std::list<Vec4> & list_k)
+		static void linearize (System const & sys, double const & dt,  State const & state, U const & u, Eigen::Matrix<double,12,12> & A, Eigen::Matrix<double,12,4> & B)
 		{
-			list_K.clear();
-			list_k.clear();
-
-			std::list<State>::const_reverse_iterator rit_state=list_state0.crbegin();
-			std::list<Ref>::const_reverse_iterator rit_ref=list_ref.crbegin();
-			std::list<U>::const_reverse_iterator rit_u=list_u0.crbegin();
-
-			Vec12 dg=(Vec12()<<SE3::log(SE3::inverse(rit_ref->g)*rit_state->g),
-							   rit_state->v-rit_ref->v).finished();
-
-			Mat12 Vxx=quadcost::Lxx(Mf,dg);
-			Vec12 Vx=quadcost::Lx(Mf,dg);
-
-			rit_state++;
-			rit_ref++;
+			Mat6 Ad=SE3::Ad(SE3::exp(-state.v*dt));
+			Mat6 dexp=SE3::dexp(state.v*dt);
 			
-			quadopt::Params params;
-			Eigen::SelfAdjointEigenSolver<Mat4> es;
+			Mat12 dgF=quadrotor::Dgf(sys,state,u);
+			dgF.block(0,0,6,12)=dexp*dgF.block(0,0,6,12);
 
-			while(rit_state!=list_state0.crend())
-			{
-				Vec4 const & u=*rit_u;
-
-				State const & state=*rit_state;
-				Vec6 const & v=rit_state->v;
-
-				Vec12 dg=(Vec12()<<SE3::log(SE3::inverse(rit_ref->g)*rit_state->g),
-									rit_state->v-rit_ref->v).finished();
-
-				Vec4 Lu=quadcost::Lu(R,u)*dt;
-				Mat4 Luu=quadcost::Luu(R,u)*dt;
-				Vec12 Lx=quadcost::Lx(M,dg)*dt;
-				Mat12 Lxx=quadcost::Lxx(M,dg)*dt;
-
-				Mat6 Ad=SE3::Ad(SE3::exp(-v*dt));
-				Mat6 dexp=SE3::dexp(v*dt);
-				
-				Mat12 dgF=quadrotor::Dgf(sys,state,u);
-				dgF.block(0,0,6,12)=dexp*dgF.block(0,0,6,12);
-
-				Eigen::Matrix<double,12,4> duF=quadrotor::Duf(sys,state,u);
-				duF.block(0,0,6,4)=dexp*duF.block(0,0,6,4);
-
-				Mat12 A=Mat12::Identity()+dgF*dt;
-				A.block(0,0,6,12)=Ad*A.block(0,0,6,12);
-				Mat12 At=A.transpose();
-
-				Eigen::Matrix<double,12,4> B=duF*dt;	
-				Eigen::Matrix<double,4,12> Bt=B.transpose();
-
-				Vec12 Qx=Lx+At*Vx;
-				Vec4 Qu=Lu+Bt*Vx;
-				Mat12 Qxx=Lxx+At*Vxx*A;
-				Eigen::Matrix<double,4,12> Qux=Bt*Vxx*A;
-				Eigen::Matrix<double,12,4> Qxu=Qux.transpose();
-				Mat4 Quu=Luu+Bt*Vxx*B;
-
-				es.compute(Quu);
-				
-				Vec4 evals=es.eigenvalues();
-				Mat4 V=es.eigenvectors();
-				
-				for(int i=0;i<4;i++)
-					if(evals(i)<0)
-						evals(i)=0;
-					else
-						break;
-				
-				evals+=alpha*Vec4::Ones();
-				Mat4 D=evals.asDiagonal();
-				Quu=V*D*V.transpose();
-				Mat4 Quuinv=V*(Vec4()<<1.0/evals(0),1.0/evals(1),1.0/evals(2),1.0/evals(3)).finished().asDiagonal()*V.transpose();
-
-				Vec4 dumax=umax-u;
-				Vec4 dumin=umin-u;
-				Vec4 k=-Quuinv*Qu;
-				Eigen::Matrix<double,4,12> K=-Quuinv*Qux;
-
-				if(k(0)>dumax(0) || k(1)>dumax(1) || k(2)>dumax(2) || k(3)>dumax(3) ||
-				   k(0)<dumin(0) || k(1)<dumin(1) || k(2)<dumin(2) || k(3)<dumin(3))
-				{
-					Vec4 x=list_k.empty()? Vec4::Zero():list_k.back();
-
-					params.xlow=dumin;
-					params.xupp=dumax;
-
-					Vec4 xmul=Vec4::Zero();
-					Eigen::Matrix<int,4,1> xstate=Eigen::Matrix<int,4,1>::Zero();
-
-					double F=(0.5*x.transpose()*Quu*x+x.transpose()*Qu)(0);
-					double Fmul=0;
-					int Fstate=0;
-					int result=optProb.fmin(Quu,     Qu,   params,
-											  x,   xmul,   xstate,
-											  F,   Fmul,   Fstate);
-					for(int i=0;i<4;i++)
-						if(x(i)>dumax(i))
-							x(i)=dumax(i);
-						else
-							if(x(i)<dumin(i))
-								x(i)=dumin(i);
-
-					if(result>=2)
-					{
-						for(int i=0;i<4;i++)
-							if(k(i)>dumax(i))
-								k(i)=dumax(i);
-							else
-								if(k(i)<dumin(i))
-									k(i)=dumin(i);
-
-						if(F<(0.5*k.transpose()*Quu*k+k.transpose()*Qu)(0))
-							if(x(0)<=dumax(0) && x(1)<=dumax(1) && x(2)<=dumax(2) && x(3)<=dumax(3) &&
-							   x(0)>=dumin(0) && x(1)>=dumin(1) && x(2)>=dumin(2) && x(3)>=dumin(3))
-								k=x;
-					}
-
-				}
-				
-				for(int i=0;i<4;i++)
-					if(fabs(dumax(i)-k(i))<1e-3 || fabs(k(i)-dumin(i))<1e-3)
-						K.row(i)=Eigen::Matrix<double,1,12>::Zero();
-
-				list_k.push_front(k);
-				list_K.push_front(K);
-
-				Eigen::Matrix<double,12,4> Kt=K.transpose();
-
-				Vxx=Qxx+Kt*Quu*K+Kt*Qux+Qxu*K;	
-				Vx=Qx+Kt*(Quu*k+Qu)+Qxu*k;
-
-				std::cout<<k.transpose()<<std::endl;
-				std::cout<<K<<std::endl;
-
-				rit_u++;
-				rit_state++;
-				rit_ref++;
-			}
-		}
-
-		static double iLQG_forward(          System const &         sys,               double      dt,                 size_t        N, 
-				                   std::list<State> const & list_state0, std::list<U> const & list_u0, std::list<Ref> const & list_ref, 
-								              Mat12 const &           M,         Mat4 const &       R,          Mat12 const &       Mf, 
-								               Vec4 const &        umin,         Vec4 const &    umax, 
-								  std::list<Eigen::Matrix<double,4,12> > const & list_K,     std::list<Vec4> const & list_k, 
-								                              std::list<State> & list_state,          std::list<U> & list_u)
-		{
-			list_state.clear();
-			list_u.clear();
-
-			State state=list_state0.front();
-			list_state.push_back(state);
-
-			std::list<U>::const_iterator itr_u0=list_u0.begin();
-			std::list<State>::const_iterator itr_state0=list_state0.begin();
-			std::list<State>::const_iterator itr_ref=list_ref.begin();
-			std::list<U>::const_iterator itr_k=list_k.begin();
-			std::list<Eigen::Matrix<double,4,12> >::const_iterator itr_K=list_K.begin();
-		
-			double cost=0;
-
-			for(int n=1; n<N; n++)
-			{
-				Vec12 dg=(Vec12()<<SE3::log(SE3::inverse(itr_ref->g)*state.g),
-									state.v-itr_ref->v).finished();
-
-
-				Vec12 error=(Vec12()<<SE3::log(SE3::inverse(itr_state0->g)*state.g),
-									state.v-itr_state0->v).finished();
-				
-				Vec4 u=*itr_u0+*itr_k+*itr_K*error;
-
-				cost+=quadcost::L(M,R,dg,u)*dt;
-				
-				for(int i=0;i<4;i++)
-					if(u(i)>umax(i))
-						u(i)=umax(i);
-					else
-						if(u(i)<umin(i))
-							u(i)=umin(i);
-
-				DState dstate(sys,state,u);
-				state=state.update(dstate,dt);
-
-				list_state.push_back(state);
-				list_u.push_back(u);
-
-				itr_k++;
-				itr_K++;
-				itr_ref++;
-				itr_state0++;
-				itr_u0++;
-			}
-
-			Vec12 dg=(Vec12()<<SE3::log(SE3::inverse(itr_ref->g)*state.g),
-								state.v-itr_ref->v).finished();
-
-			cost+=quadcost::L(Mf,Mat4::Zero(),dg,Vec4::Zero());
-
-			return cost;
-		}
-
-	public:
-		static bool iLQG(System const &    sys,         double     dt,                 double        T, 
-				          State const & state0, std::list<U> & list_U, std::list<Ref> const & list_ref, 
-						  Mat12 const &      M,   Mat4 const &      R,          Mat12 const &       Mf, 
-						   Vec4 const &   umin,   Vec4 const &    umax, 
-					     double const &rel_error=0.02,   size_t const & itr_max=10, 
-						 double const & alpha=1, double const & coeff=1.6)
-		{
-			size_t N=size_t(T/dt+0.5);
-
-			if(list_ref.size()<N)
-			{
-				std::cout<<"ERROR: Not enough references to compute cost functions."<<std::endl;
-				return false;
-			}
-
-
-			if(list_U.size()<N-1)
-			{
-				std::list<U> list_Uf(N-list_U.size()-1, Vec4::Zero());
-				list_U.splice(list_U.end(),list_Uf);
-			}
+			A=Mat12::Identity()+dgF*dt;
+			A.block(0,0,6,12)=Ad*A.block(0,0,6,12);
 			
-			std::list<State> list_state0;
-			std::list<U> list_u0;
-
-			State state=state0;
-			list_state0.push_back(state);
-
-			std::list<U>::const_iterator itr_u=list_U.begin();
-			std::list<State>::const_iterator itr_ref=list_ref.begin();
-
-			double cost=0;
-
-			for(int n=1;n<N;n++)
-			{
-				Vec12 dg=(Vec12()<<SE3::log(SE3::inverse(itr_ref->g)*state.g),
-									state.v-itr_ref->v).finished();
-
-				std::cout<<dg.transpose()<<std::endl;
-
-				cost+=quadcost::L(M,R,dg,*itr_u)*dt;
-
-				DState dstate(sys,state,*itr_u);
-				state=state.update(dstate,dt);
-
-				list_state0.push_back(state);
-				list_u0.push_back(*itr_u);
-
-				itr_u++;
-				itr_ref++;
-			}
-		
-			for(size_t n=0;n<itr_max;n++)
-			{
-				std::list<Eigen::Matrix<double,4,12> > list_K;
-				std::list<Vec4> list_k;
-
-				double al=alpha;
-				iLQG_back(sys,dt,list_state0,list_u0,list_ref,M,R,Mf,umin,umax,al,list_K,list_k);
-
-				std::list<State> list_state;
-				std::list<U> list_u;
-				double cost_new=iLQG_forward(        sys,      dt,        N, 
-						                     list_state0, list_u0, list_ref, 
-											           M,       R,       Mf, 
-													umin,    umax, 
-												  list_K,  list_k, 
-											  list_state,  list_u);
-
-				if(fabs(cost_new-cost)/cost<rel_error)
-					break;
-
-				std::cout<<cost<<" "<<cost_new<<std::endl;
-
-				if(cost_new<cost)
-				{
-					list_u0=list_u;
-					list_state0=list_state;
-
-//					std::cout<<cost<<" "<<cost_new<<std::endl;
-					
-					if(al>0.01)
-						al/=coeff;
-				}
-				else
-				{
-					al*=coeff;
-
-					if(al>50)
-						break;
-				}
-			}
-
-			if(alpha<50)
-				list_U=list_u0;
+			Eigen::Matrix<double,M,N> duF=quadrotor::Duf(sys,state, u);
+			B=duF*dt;
 		}
 
+		static double L(const Mat12 &M, const Mat4 &R, const Vec12 &dg, const Vec4 &du)
+		{
 
+			return (dg.transpose()*M*dg+du.transpose()*R*du)(0)*0.5;
+		}
+
+		static Vec12 Lx(const Mat12 &M, const Vec12 &dg)
+		{
+			Vec12 Lx=M*dg;
+			Lx.head(6)=SE3::dexpinv(-dg.head(6))*Lx.head(6);
+
+			return Lx;
+		}
+
+		static Mat12 Lxx(const Mat12 &M, const Vec12 &dg)
+		{
+			Vec6 dg_x=dg.head(6);
+			Vec6 dg_v=dg.tail(6);
+
+			Mat6 dexpinv=SE3::dexpinv(-dg_x);
+			Mat6 dexpinvT=dexpinv.transpose();
+
+			Eigen::Matrix<double,6,36> ddexpinv=SE3::ddexpinv(-dg_x);
+
+			Mat12 Lxx=M;
+			Lxx.block(0,0,6,6)=dexpinvT*M.block(0,0,6,6)*dexpinv;
+			Lxx.block(0,6,6,6)=dexpinvT*M.block(0,6,6,6);
+			Lxx.block(6,0,6,6)=M.block(0,6,6,6).transpose();
+
+			Eigen::Matrix<double,1,6> r1=dg.transpose()*M.block(0,0,12,6);
+
+			Mat6 DM1=-dexpinvT*(Mat6()<<r1*ddexpinv.block(0,0,6,6),
+										r1*ddexpinv.block(0,6,6,6),
+										r1*ddexpinv.block(0,12,6,6),
+										r1*ddexpinv.block(0,18,6,6),
+										r1*ddexpinv.block(0,24,6,6),
+										r1*ddexpinv.block(0,30,6,6)).finished();
+			
+			Eigen::Matrix<double,1,6> r2=-0.5*r1*dexpinv;
+
+			Mat6 DM2=(Mat6()<<r2*SE3::ad(SE3::e[0]),
+							  r2*SE3::ad(SE3::e[1]),
+							  r2*SE3::ad(SE3::e[2]),
+							  r2*SE3::ad(SE3::e[3]),
+							  r2*SE3::ad(SE3::e[4]),
+							  r2*SE3::ad(SE3::e[5])).finished();
+			
+			Lxx.block(0,0,6,6)+=DM1+DM2;	
+
+			return Lxx;
+		}
+
+		static Vec4 Lu(const Mat4 &R, const Vec4 &du)
+		{
+			return R*du;
+		}
+
+		static Mat4 Luu(const Mat4 &R, const Vec4 &du)
+		{
+			return R;
+		}
 };
 
 quadrotor::System::System(double Ix, double Iy, double Iz, double m_, double d_, double km_, double kt_): I((Mat3()<<Ix,0,0,0,Iy,0,0,0,Iz).finished()), m(m_), d(d_), km(km_), kt(kt_), I_inv((Mat3()<<1.0/Ix, 0, 0, 0, 1.0/Iy,0,0, 0, 1.0/Iz).finished())
@@ -579,6 +338,11 @@ void quadrotor::State::save(const std::list<State> & states, std::string path)
 	mxDestroyArray(omega);
 }
 
+Vec12 quadrotor::State::diff(State const & state, State const & ref)
+{
+	return (Vec12()<<SE3::log(SE3::inverse(ref.g)*state.g), state.v-ref.v).finished();
+}
+
 quadrotor::DState::DState(const System & sys, const State & state, Vec4 u)
 {
 	Eigen::Matrix<double,M,1> dstate=f(sys,state)+h(sys,state)*u;
@@ -587,5 +351,4 @@ quadrotor::DState::DState(const System & sys, const State & state, Vec4 u)
 	a=dstate.tail(6);
 }
 
-quadopt quadrotor::optProb;
 #endif

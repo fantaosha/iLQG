@@ -24,5 +24,11 @@ message(${CMAKE_CXX_FLAGS})
 #add_executable(test2 test2.cpp)
 #target_link_libraries(test2 ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
 
-add_executable(ilqg ilqg.cpp)
-target_link_libraries(ilqg ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
+#add_executable(ilqg ilqg.cpp)
+#target_link_libraries(ilqg ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
+
+add_executable(car car.cpp)
+target_link_libraries(car ${SNOPT_LIBRARIES})
+
+#add_executable(test test.cpp)
+#target_link_libraries(test ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
