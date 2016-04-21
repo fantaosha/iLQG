@@ -34,6 +34,6 @@ int main()
 	
 	iLQG<car> ilqg(sys,dt);
 	ilqg.init(state0, list_u0, list_ref, params, umin, umax,N);
-	ilqg.evaluate(0.005,20,list_u0);
+	ilqg.evaluate(-1,20,list_u0);
 	return 0;
 }
