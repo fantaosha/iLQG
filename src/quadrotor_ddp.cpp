@@ -1,8 +1,8 @@
 /*************************************************************************
-    > File Name: ilqg.cpp
+    > File Name: quadrotor_ddp.cpp
     > Author: Taosha Fan
     > Mail: tfan1@jhu.edu 
-    > Created Time: Wed 20 Apr 2016 03:54:48 AM CDT
+    > Created Time: Fri 22 Apr 2016 09:27:35 AM CDT
  ************************************************************************/
 #include <Eigen/Dense>
 #include <liegroup.hpp>
@@ -10,12 +10,10 @@
 #include <quadrotor.hpp>
 #include <iostream>
 
-#include <ilqg.hpp>
+#include <ddp.hpp>
 #include <simulator.hpp>
 
 #include <string>
-
-#define TRACK
 
 int main()
 {
@@ -77,7 +75,7 @@ int main()
 	}
 #else
 	quadrotor::State state_ref;
-	state_ref.g.block(0,0,3,3)=SO3::exp((Vec3()<<1,2,1).finished());
+	state_ref.g.block(0,0,3,3)=SO3::exp((Vec3()<<0,0,0).finished());
 	state_ref.g.block(0,3,3,1)=(Vec3()<<0,0,0).finished();
 
 	std::list<quadrotor::State> list_ref(4000,state_ref);
@@ -103,13 +101,13 @@ int main()
 //	Mf.block(6,6,6,6)=Mf.block(0,0,6,6);
 	Mat12 M=Mf/8;
 	Mat4 R=Mat4::Identity()*1;
-	iLQG<quadrotor>::Params params(M,R,Mf);
+	DDP<quadrotor>::Params params(M,R,Mf);
 
 	// Set up initial state
 	quadrotor::State state0=list_ref.front();
 
-	state0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*15;
-	state0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*2);
+	state0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*5;
+	state0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*0);
 	state0.v.head(3)-=Vec3::Random().normalized()*0;
 	state0.v.tail(3)-=Vec3::Random().normalized()*0;
 	// Set up simulator
@@ -120,7 +118,7 @@ int main()
 	Vec4 umin=-6*Vec4::Ones();
 	Vec4 umax=Vec4::Ones()*6;
 	
-	iLQG<quadrotor> ilqg(sys,dt);
+	DDP<quadrotor> ddp(sys,dt);
 
 	double ts=0.02;
 	double T=36;
@@ -128,36 +126,6 @@ int main()
 	size_t SN=size_t(ts/dt+0.5);
 	size_t ND=size_t(Tp/dt+0.5)+1;
 
-	ilqg.init(state0, list_u0, list_ref, params, umin, umax, 500);
-	ilqg.evaluate(-1,50,list_u0);
-/*************************************************************************
-	timespec T_start, T_end;
-
-	for(double t=1e-5; t<=T; t+=ts )
-	{
-		clock_gettime(CLOCK_MONOTONIC,&T_start);
-
-		ilqg.init(state0, list_u0, list_ref, params, umin, umax, ND);
-		ilqg.evaluate(-1,20,list_u0);
-
-		clock_gettime(CLOCK_MONOTONIC,&T_end);
-		std::cout<<"time consumed is "<<(T_end.tv_sec-T_start.tv_sec)+(T_end.tv_nsec-T_start.tv_nsec)/1000000000.0<<"s"<<std::endl;
-
-
-		for(size_t n=0;n<SN;n++)
-		{
-			Vec4 ut=list_u0.front();
-			sim.update(ut);
-
-			list_u0.pop_front();
-			list_ref.pop_front();
-		}
-
-		quadrotor::State state=sim.get_state();
-		quadrotor::State state_ref=list_ref.front();
-		state=state0;
-
-		std::cout<<quadrotor::State::diff(state,state_ref).transpose()<<std::endl;
-	}
-*************************************************************************/
+	ddp.init(state0, list_u0, list_ref, params, 500);
+	ddp.iterate(-1,50,list_u0);
 }

@@ -1,11 +1,11 @@
 /*************************************************************************
-    > File Name: ilqg.hpp
+    > File Name: DDP.h
     > Author: Taosha Fan
     > Mail: tfan1@jhu.edu 
-    > Created Time: Wed 20 Apr 2016 03:48:14 PM CDT
+    > Created Time: Fri 22 Apr 2016 07:15:29 AM CDT
  ************************************************************************/
-#ifndef _ILQG
-#define _ILQG
+#ifndef _DDP
+#define _DDP
 #include <liegroup.hpp>
 #include <snOPT.hpp>
 #include <Eigen/Cholesky>
@@ -13,7 +13,7 @@
 #include <type.hpp>
 
 
-template<typename Robot> class iLQG
+template<typename Robot> class DDP
 {
 	public:
 		typedef typename Robot::System System;
@@ -50,9 +50,6 @@ template<typename Robot> class iLQG
 			}
 		};
 
-	protected:
-		typedef	snOPT<N> snopt; 
-
 protected:
 		System const sys;
 		double const dt;
@@ -62,48 +59,49 @@ protected:
 		size_t Num;
 
 		State state0;
-		VecN umax,umin;
 
 		std::list<U> list_u0;
-		std::list<U> list_u1;
+		std::list<U> list_du;
 		std::list<Ref> list_ref;
 		std::list<State> list_state0;
 
 		double J0;
 
-		int box_opt(MatNN const & Quu, VecN const & Qu, VecN const & dumin, VecN const & dumax, VecN & ku, Eigen::Matrix<int,N,1> & ku_state);
-		bool box(VecN &x, Eigen::Matrix<int,N,1> & xstate, VecN const & xmin, VecN const & xmax);
-
 		Vec2 dV;
-//		double alpha;
-		constexpr static double dalpha1=0.25;
-		constexpr static double dalpha2=2;
-		constexpr static double alpha1=0.1;
-		constexpr static double alpha2=0.5; 
-		constexpr static double alpha_min=1e-12;
 
-	public:
-		iLQG(System const & sys, double const & dt);
-		bool init(State const & state0, std::list<U> const & list_u0, std::list<Ref> const & list_ref, Params const & params, VecN const & umin, VecN const & umax, size_t const & Num);
-		void evaluate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u);
-		double forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku);
+		constexpr static  double dJmin=1e-10;
+		const double a; // Armijo search stepsize
+		constexpr static  double amin=1e-10; 
+
+		constexpr static  double sigma=0.1;
+		constexpr static  double beta=0.25; 
+
+		constexpr static double s1=0.1;   ///< Armijo-Goldstein step-size control factor s1
+		constexpr static double s2=0.5;   ///< Armijo-Goldstein step-size control factor s2
+		constexpr static double b1=0.25;   ///< Armijo-Goldstein step-size control factor b1
+		constexpr static double b2=2;   ///< Armijo-Goldstein step-size control factor b2
+
+	public:               
+		DDP(System const & sys, double const & dt);
+		bool init(State const & state0, std::list<U> const & list_u0, std::list<Ref> const & list_ref, Params const & params, size_t const & Num);
+		void iterate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u);
+		void forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku);
 		void backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku);
 };
 
-template <typename Robot> iLQG<Robot>::iLQG(System const & sys_, double const & dt_):sys(sys_), dt(dt_), Num(0)
+template <typename Robot> DDP<Robot>::DDP(System const & sys_, double const & dt_):sys(sys_), dt(dt_), Num(0), a(2)
 {
-	snopt::init();
 }
 
-template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::list<U> const & list_u0_, std::list<Ref> const & list_ref_, Params const & params_, VecN const & umin_, VecN const & umax_, size_t const & Num_)
+template <typename Robot> bool DDP<Robot>::init(State const & state0_, std::list<U> const & list_u0_, std::list<Ref> const & list_ref_, Params const & params_, size_t const & Num_)
 {
-	if(list_ref_.size()<Num_)
+	if(list_ref_.size()<Num_+1)
 	{
 		std::cout<<"ERROR: Not enough references."<<std::endl;
 		return false;
 	}
 
-	if(list_u0_.size()<Num_-1)
+	if(list_u0_.size()<Num)
 	{
 		std::cout<<"ERROR: Not enough control inputs."<<std::endl;
 		return false;
@@ -112,11 +110,9 @@ template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::lis
 	params=params_;
 	Num=Num_;
 	state0=state0_;
-	umin=umin_;
-	umax=umax_;
 
 	list_u0.clear();
-	list_u1.clear();
+	list_du.clear();
 	list_ref.clear();
 	list_state0.clear();
 
@@ -133,7 +129,7 @@ template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::lis
 
 	VecM error;
 
-	for(int i=1;i<Num;i++)
+	for(int i=0;i<Num;i++)
 	{
 		error=Robot::State::diff(state, *itr_ref);
 		J0+=Robot::L(params.M,params.R,error,*itr_u)*dt;
@@ -160,26 +156,56 @@ template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::lis
 	return true;
 }
 
-template<typename Robot> void iLQG<Robot>::evaluate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u)
+template<typename Robot> void DDP<Robot>::iterate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u)
 {
 	std::list<MatNM> list_K;
 	std::list<VecN> list_ku;
 
-
 	for(int i=0; i<itr_max; i++)
 	{
-
 		backwards(list_K, list_ku);
-		double J1=forwards(list_K,list_ku);
+		forwards(list_K,list_ku);
+		
+		typename std::list<U>::iterator itr_u0=list_u0.begin();
+		typename std::list<U>::const_iterator itr_du=list_du.cbegin();
 
-		if(fabs(J1-J0)/J0<tolerance)
-			break;
+		while(itr_du!=list_du.cend())
+			*itr_u0+=*itr_du;
 
-		J0=J1;
+		J0=0;
+		typename std::list<Ref>::const_iterator itr_ref=list_ref.cbegin();
+
+		State state=state0;
+		list_state0.clear();
+		list_state0.push_back(state);
+
+		VecM error;
+
+		itr_u0=list_u0.begin();
+		for(int i=0; i<Num;i++)
+		{
+			U u0=*(itr_u0);
+			Ref ref=*itr_ref;
+
+			error=Robot::State::diff(state, ref);
+			J0+=Robot::L(params.M,params.R,error,u0)*dt;
+
+			DState dstate(sys,state,u0);
+			state=state.update(dstate,dt);
+
+			list_state0.push_back(state);
+
+			itr_u0++;
+			itr_ref++;
+		}
+		
+		list_ref.push_back(*itr_ref);
+		error=Robot::State::diff(state, *itr_ref);
+		J0+=Robot::L(params.Mf,MatNN::Zero(),error,VecN::Zero());
+
 		std::cout<<"===================================================="<<std::endl;
 		std::cout<<"Iteration "<<i<<std::endl;
 		std::cout<<"J0: "<<J0<<std::endl;
-//		std::cout<<"alpha: "<<alpha<<std::endl;
 		std::cout<<"===================================================="<<std::endl;
 	}
 
@@ -195,13 +221,11 @@ template<typename Robot> void iLQG<Robot>::evaluate(double const & tolerance, si
 	}
 }
 
-template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku)
+template<typename Robot> void DDP<Robot>::forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku)
 {
-	std::list<State> list_state;
+	double a=this->a;
+	double dJ=1;
 
-	double J1;	
-
-	double alpha=2;
 	for(int count=20;count>0;count--)
 	{
 		typename std::list<U>::const_iterator itr_u0=list_u0.begin();
@@ -210,11 +234,11 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 		typename std::list<U>::const_iterator itr_ku=list_ku.begin();
 		typename std::list<MatNM >::const_iterator itr_K=list_K.begin();
 
-		State state=list_state0.front();
 
 		Ref ref;
 		VecN u0;
-		VecN u1;
+		VecN du;
+		VecN un;
 
 		VecN ku;
 		MatNM K;
@@ -222,49 +246,56 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 		VecM error;
 		VecM dg;
 
-		J1=0;
+		double Jn=0;
 
-		list_state.clear();
-		list_u1.clear();
-		
+		list_du.clear();
+	
 //		std::cout<<"****************************"<<std::endl;
 //		std::cout<<"Minior Iteration "<<11-count<<std::endl;
 //		std::cout<<"****************************"<<std::endl;
-		for(int i=1;i<Num;i++)
-		{
-			list_state.push_back(state);
+		State state=list_state0.front();
 
+		for(int i=0;i<Num;i++)
+		{
 			state0=*itr_state0;
 			ref=*itr_ref;
 			u0=*itr_u0;
-		
 
 			ku=*itr_ku;
 			K=*itr_K;
 
-			
-
 			dg=Robot::State::diff(state,state0);
-			u1=u0+alpha*ku+K*dg;
-
-			for(int i=0;i<N;i++)
-				if(u1(i)>umax(i))
-					u1(i)=umax(i);
-				else
-					if(u1(i)<umin(i))
-						u1(i)=umin(i);
-
+			
+			if(std::isnan(dg(0)))
+			{
+				std::cout<<"Iteration #"<<i<<std::endl;
+				assert(std::isnan(dg(0)));
+			}
+			du=a*ku+K*dg;
+			un=u0+du;
 
 			error=Robot::State::diff(state, ref);
-			J1+=Robot::L(params.M,params.R,error,u1)*dt;
+			Jn+=Robot::L(params.M,params.R,error,un)*dt;
 
-			if(J1>J0)
-				break;
+			try
+			{
+				DState dstate(sys,state,un);
+				state=state.update(dstate,dt);
 
-			DState dstate(sys,state,u1);
-			state=state.update(dstate,dt);
-			
-			list_u1.push_back(u1);
+				if(std::isnan(state.g(0)))
+					throw 1;
+			}
+			catch(int e)
+			{
+//				std::cerr << "exception caught: " << e.what() <<std::endl; 
+				std::cout << Jn<<std::endl;
+				std::cout << "NaN is observed"<<std::endl;
+//				throw std::runtime_error(std::string("Nan observed")); 
+
+				return;
+			}
+
+			list_du.push_back(du);
 
 			itr_u0++;
 			itr_state0++;
@@ -273,53 +304,58 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 			itr_K++;
 		}
 
-		list_state.push_back(state);
+		dg=Robot::State::diff(state,state0);
 
 		error=Robot::State::diff(state, ref);
-		J1+=Robot::L(params.Mf,MatNN::Zero(),error,U::Zero());
+		Jn+=Robot::L(params.Mf,MatNN::Zero(),error,U::Zero());
 
-		double dJ=J1-J0;
-		
-		if(dJ>0)
+		double dJ=Jn-J0;
+	
+		if(a<amin || fabs(dJ) < dJmin)
+			break;
+
+		if(dJ>sigma*a*dV(0))
 		{
-//			std::cout<<"alpha: "<<alpha<<std::endl;
-//			std::cout<<"dalpha: "<<dalpha1<<std::endl;
-			alpha*=dalpha1;
-			
-
-			if(alpha<alpha_min)
-				break;
-
+			a*=beta;
 			continue;
 		}
 		else
+			break;
+
+/*************************************************************************
+		if(dJ>0)
 		{
-			double dJ0=alpha*dV(0)+0.5*alpha*alpha*dV(1);
+			a*=b1;
+		
+			if(a<1e-12)
+				break;
+		}
+		else
+		{
+			double dJ0=a*dV(0)+0.5*a*a*dV(1);
 			double dJm=dJ/dJ0;
 
-			if(dJm<alpha1)
-				alpha*=dalpha1;
+			if(dJm<s1)
+				a*=b1;
 			else
-				if (dJm>alpha2)
+				if (dJm>s2)
 					alpha*=dalpha2;
-
-			break;
+				else
+					break;
+			if(a<1e-12)
+				break;
 		}
+*************************************************************************/
 	}
-
-	list_state0=list_state;
-	list_u0=list_u1;
 
 //	std::cout<<"============================================"<<std::endl;
 //	std::cout<<"J1: "<<J1<<std::endl;
 //	std::cout<<list_state.back().x.transpose()<<std::endl;
 //	std::cout<<"============================================"<<std::endl;
 //	std::cout<<state.g<<std::endl;
-
-	return J1;
 }
 
-template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku)
+template<typename Robot> void DDP<Robot>::backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku)
 {
 	VecM Qx;
 	VecN Qu;
@@ -349,7 +385,9 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 	MatMM const & Mf=params.Mf;
 
 	dV=Vec2::Zero();
-	
+
+	static const MatNN Id=MatNN::Identity();
+
 	typename std::list<State>::const_reverse_iterator rit_state=list_state0.crbegin();
 	typename std::list<Ref>::const_reverse_iterator rit_ref=list_ref.crbegin();
 	typename std::list<U>::const_reverse_iterator rit_u=list_u0.crbegin();
@@ -358,20 +396,13 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 	Vx=Robot::Lx(Mf,error);
 	Vxx=Robot::Lxx(Mf,error);
 	
-//	std::cout<<"+++++++++++++++++++++++++++++++++"<<std::endl;
-//	std::cout<<rit_state->g<<std::endl;
-//	std::cout<<rit_ref->g<<std::endl;
-//
-//	rit_state++;
-//	rit_ref++;
-//	std::cout<<rit_state->g<<std::endl;
-//	std::cout<<rit_ref->g<<std::endl;
-//	std::cout<<"+++++++++++++++++++++++++++++++++"<<std::endl;
-
 	list_K.clear();
 	list_ku.clear();
 
 	Eigen::LLT<MatNN> llt;
+
+	rit_state++;
+	rit_ref++;
 
 	while(rit_state!=list_state0.crend())
 	{
@@ -387,15 +418,11 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 
 		Robot::linearize(sys, dt, state, u, A, B);
 	
-//		std::cout<<A<<std::endl;
-//		std::cout<<B<<std::endl;
 		At=A.transpose();
 		Bt=B.transpose();
 
-
 		Qx=Lx + At*Vx;
 		Qu=Lu + Bt*Vx;
-
 		Qxx=Lxx + At*Vxx*A;
 		Quu=Luu + Bt*Vxx*B;
 		Qux=Bt*Vxx*A;
@@ -410,8 +437,7 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 		double mu=params.mu;
 		double dmu=1;
 
-		rit_state++;
-		rit_ref++;
+
 		while(1)
 		{
 			Quum=Quu+mu*MatNN::Identity();
@@ -427,64 +453,28 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 
 			dmu=std::max(params.dmu0, dmu*params.dmu0);
 			mu=std::max(params.mumin,mu*dmu);
+
+			if (mu>params.mumax)
+				break;
 		}
 		
 		if (mu>params.mumax)
 			break;
 		
-//		std::cout<<"mu: "<<mu<<std::endl;
-
 		VecN ku=-llt.solve(Qu);
 		MatNM K=-llt.solve(Qux); 
 
-
-		VecN dumax=umax-u;
-		VecN dumin=umin-u;
-
-		Eigen::Matrix<int,N,1> ku_state=Eigen::Matrix<int,N,1>::Zero();
-		
-		if(box(ku,ku_state,dumin,dumax))
-		{
-			VecN ku0=ku;
-			Eigen::Matrix<int,N,1> ku_state0;
-			int result=box_opt(Quum, Qu, dumin, dumax, ku0, ku_state0);
-			if(result>=2)
-			{
-				double F=ku.transpose()*(Quum*ku*0.5+Qu);
-				double F0=ku0.transpose()*(Quum*ku0*0.5+Qu);
-
-				if(F0<F)
-				{
-					ku_state=ku_state0;
-					ku=ku0;
-				}
-			}
-			else
-			{
-				ku_state=ku_state0;
-				ku=ku0;
-			}
-
-			for(int i=0;i<N;i++)
-				if(ku_state(i))
-					K.row(i)=Eigen::Matrix<double,1,iLQG<Robot>::M>::Zero();
-		}
+		assert(!std::isnan(ku[0]));
+		assert(!std::isnan(K(0,0)));
 
 		MatMN Kt=K.transpose();
 
-		Vxx=Qxx+Kt*Qux;
-		Vx=Qx+Kt*Qu;
 
-//		Vxx=Qxx+Kt*Quum*K+Kt*Qux+Qxu*K;
-//		Vx=Qx+Kt*(Quum*ku+Qu)+Qxu*ku;
-
-//		std::cout<<K<<std::endl;
-//		std::cout<<ku.transpose()<<std::endl<<std::endl;
-//		std::cout<<Vxx<<std::endl;
-//		std::cout<<Vx.transpose()<<std::endl;
-
-		Eigen::Matrix<double,1,N> kut=ku.transpose();
-		dV+=(Vec2()<<kut*Qu,kut*Quu*ku).finished();
+		Vxx=Qxx+Kt*Quum*K+Kt*Qux+Qxu*K;
+		Vx=Qx+Kt*(Quum*ku+Qu)+Qxu*ku;
+		
+		dV(0)+=ku.dot(Qu);
+		dV(1)+=0.5*ku.dot(Quu*ku);
 
 		list_ku.push_front(ku);
 		list_K.push_front(K);
@@ -492,61 +482,7 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 		rit_state++;
 		rit_ref++;
 		rit_u++;
-
-		std::cout<<list_ku.size()<<std::endl;
 	}
-	
-//	std::cout<<"size: "<<list_ku.size()<<std::endl;
 }
 
-template<typename Robot> int iLQG<Robot>::box_opt(MatNN const & Quu, VecN const & Qu, VecN const & dumin, VecN const & dumax, VecN & ku, Eigen::Matrix<int,N,1>  & ku_state)
-{
-	typename snopt::Params options;
-	options.xlow=dumin;
-	options.xupp=dumax;
-
-	VecN x=ku;
-	VecN xmul=VecN::Zero();
-	Eigen::Matrix<int,N,1> xstate=Eigen::Matrix<int,N,1>::Zero();
-
-	double F=0;
-	double Fmul=0;
-	int Fstate=0;
-
-	int result=snopt::fmin(Quu,   Qu, options,
-			                 x, xmul,  xstate,
-							 F, Fmul,  Fstate);
-
-	box(x,xstate,options.xlow,options.xupp);
-
-	ku=x;
-	ku_state=xstate;
-
-	return result;
-}
-
-template<typename Robot> bool iLQG<Robot>::box(VecN &x, Eigen::Matrix<int,N,1> & xstate, VecN const & xmin, VecN const & xmax)
-{
-	bool bounded=false;
-	xstate=Eigen::Matrix<int,N,1>::Zero();
-
-	for(int i=0;i<Robot::N;i++)
-		if(x(i)>xmax(i))
-		{
-			x(i)=xmax(i);
-			xstate(i)=1;
-
-			bounded=true;
-		}
-		else
-			if(x(i)<xmin(i))
-			{
-				x(i)=xmin(i);
-				xstate(i)=1;
-
-				bounded=true;
-			}
-
-	return bounded;
-}
 #endif

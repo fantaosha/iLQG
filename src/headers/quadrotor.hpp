@@ -187,6 +187,7 @@ struct quadrotor
 			Lxx.block(0,0,6,6)=dexpinvT*M.block(0,0,6,6)*dexpinv;
 			Lxx.block(0,6,6,6)=dexpinvT*M.block(0,6,6,6);
 			Lxx.block(6,0,6,6)=M.block(0,6,6,6).transpose();
+/*************************************************************************
 
 			Eigen::Matrix<double,1,6> r1=dg.transpose()*M.block(0,0,12,6);
 
@@ -207,6 +208,7 @@ struct quadrotor
 							  r2*SE3::ad(SE3::e[5])).finished();
 			
 			Lxx.block(0,0,6,6)-=DM1+DM2;	
+*************************************************************************/
 
 			return Lxx;
 		}

@@ -11,7 +11,7 @@
 #include<functional>
 
 #include<Eigen/Dense>
-#include<list>
+#include<vector>
 
 #include<mat.h>
 
@@ -37,8 +37,8 @@ template<typename Robot> class Sim
 		const double dt; // simulation time step, dt>0
 
 	protected:
-		std::list<State> states[4];
-		std::list<U> inputs;
+		std::vector<State> states[4];
+		std::vector<U> inputs;
 
 	public:
 		Sim(System system_, double dt_):system(system_), dt(dt_)
@@ -47,27 +47,33 @@ template<typename Robot> class Sim
 
 		State get_state() const
 		{
-			return states->back();
+			return states[0].back();
 		}
 
-		std::list<State> const & get_states() const
+		std::vector<State> const & get_states() const
 		{
 			return states[0];
 		}
 
-		std::list<U> const & get_inputs() const
+		std::vector<U> const & get_inputs() const
 		{
 			return inputs;
 		}
 
-		void init(State const & state0)
+		void init(State const & state0, size_t const & n)
 		{
 			states[0].clear();
 			states[1].clear();
 			states[2].clear();
 			states[3].clear();
 
+			states[0].reserve(n);
+			states[1].reserve(n);
+			states[2].reserve(n);
+			states[3].reserve(n);
+
 			inputs.clear();
+			inputs.reserve(n);
 			states[0].push_back(state0);
 		}
 
@@ -124,7 +130,7 @@ template<typename Robot> class Sim
 
 			file=matOpen(path.c_str(),"u");
 
-			typename std::list<Eigen::Matrix<double,Robot::N,1> >::const_iterator itr_u=inputs.begin();
+			typename std::vector<Eigen::Matrix<double,Robot::N,1> >::const_iterator itr_u=inputs.begin();
 
 			mxArray *pU=mxCreateNumericArray(3,dims,mxDOUBLE_CLASS,mxREAL);
 

@@ -1,8 +1,8 @@
 /*************************************************************************
-    > File Name: ilqg.cpp
+    > File Name: quadrotor_lqr.cpp
     > Author: Taosha Fan
     > Mail: tfan1@jhu.edu 
-    > Created Time: Wed 20 Apr 2016 03:54:48 AM CDT
+    > Created Time: Fri 22 Apr 2016 01:39:46 PM CDT
  ************************************************************************/
 #include <Eigen/Dense>
 #include <liegroup.hpp>
@@ -10,16 +10,14 @@
 #include <quadrotor.hpp>
 #include <iostream>
 
-#include <ilqg.hpp>
+#include <lqr.hpp>
 #include <simulator.hpp>
 
 #include <string>
-
-#define TRACK
+#include <mat.h>
 
 int main()
 {
-#ifdef TRACK
 	char file[]="/media/fantaosha/Documents/JHU/Summer 2015/quad_rotor_traj/traj_full_12s_1_small.mat";
 
 	mxArray *mxR;
@@ -37,6 +35,7 @@ int main()
 
 	size_t N=mxGetN(mxU);
 	size_t sN=10;
+	size_t num=N/sN;
 
 	void *pR=mxGetPr(mxR);
 	void *pw=mxGetPr(mxw);
@@ -44,7 +43,8 @@ int main()
 	void *pvq=mxGetPr(mxvq);
 	void *pU=mxGetPr(mxU);
 
-	std::list<typename quadrotor::State> list_ref;
+	std::vector<typename quadrotor::State> refs;
+	refs.reserve(num);
 
 	for(int i=0;i<N;i+=sN)
 	{
@@ -56,7 +56,7 @@ int main()
 		memcpy(xq.data(),pxq,sizeof(double)*xq.rows()*xq.cols());
 		memcpy(vq.data(),pvq,sizeof(double)*vq.rows()*vq.cols());
 
-		list_ref.emplace_back(R,xq,w,R.transpose()*vq);
+		refs.emplace_back(R,xq,w,R.transpose()*vq);
 
 		pR+=sizeof(double)*R.rows()*R.cols()*sN;
 		pw+=sizeof(double)*w.rows()*w.cols()*sN;
@@ -66,23 +66,16 @@ int main()
 
 	sN=10;
 
-	std::list<typename quadrotor::U> list_u0;
+	std::vector<typename quadrotor::U> us0;
+	us0.reserve(num);
 
 	for(int i=0;i<N;i+=sN)
 	{
 		Eigen::Matrix<double,4,1> u;
 		memcpy(u.data(),pU,sizeof(double)*u.rows()*u.cols());
-		list_u0.push_back(u.cwiseProduct(u));
+		us0.push_back(u.cwiseProduct(u));
 		pU+=sizeof(double)*u.rows()*u.cols()*sN;
 	}
-#else
-	quadrotor::State state_ref;
-	state_ref.g.block(0,0,3,3)=SO3::exp((Vec3()<<1,2,1).finished());
-	state_ref.g.block(0,3,3,1)=(Vec3()<<0,0,0).finished();
-
-	std::list<quadrotor::State> list_ref(4000,state_ref);
-	std::list<quadrotor::U> list_u0(4000, Vec4::Zero());
-#endif
 
 	std::srand((unsigned int) time(0));
 	// Set up quadrotor parameters
@@ -97,39 +90,45 @@ int main()
 	quadrotor::System sys(Ix,Iy,Iz,m,d,km,kt);
 	
 	// Set up cost function
-	Mat12 Mf=5*Mat12::Identity();
+	Mat12 Mf=20*Mat12::Identity();
 	Mf.block(0,0,3,3)*=2;
 	Mf.block(3,3,3,3)*=4;
-//	Mf.block(6,6,6,6)=Mf.block(0,0,6,6);
 	Mat12 M=Mf/8;
 	Mat4 R=Mat4::Identity()*1;
-	iLQG<quadrotor>::Params params(M,R,Mf);
+	LQR<quadrotor>::Params params(M,R,Mf);
 
 	// Set up initial state
-	quadrotor::State state0=list_ref.front();
+	quadrotor::State state0=refs[0];
 
-	state0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*15;
-	state0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*2);
+	state0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*5;
+	state0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*1);
 	state0.v.head(3)-=Vec3::Random().normalized()*0;
 	state0.v.tail(3)-=Vec3::Random().normalized()*0;
 	// Set up simulator
 	double dt=0.01;
 	Sim<quadrotor> sim(sys,dt);
-	sim.init(state0);
 
 	Vec4 umin=-6*Vec4::Ones();
 	Vec4 umax=Vec4::Ones()*6;
-	
-	iLQG<quadrotor> ilqg(sys,dt);
+
+	std::vector<Eigen::Matrix<double,4,12> > Ks;
+	LQR<quadrotor>::solve(sys,dt,num,params,us0,refs,Ks);
 
 	double ts=0.02;
 	double T=36;
 	double Tp=1.5;
-	size_t SN=size_t(ts/dt+0.5);
-	size_t ND=size_t(Tp/dt+0.5)+1;
+	size_t tsn=size_t(ts/dt+0.5);
 
-	ilqg.init(state0, list_u0, list_ref, params, umin, umax, 500);
-	ilqg.evaluate(-1,50,list_u0);
+	sim.init(state0,num);
+
+	for(int i=0;i<500;i++)
+	{
+		quadrotor::State state=sim.get_state();
+		Vec12 error=quadrotor::State::diff(state,refs[i]);
+		std::cout<<error.norm()<<" ";
+		Vec4 u=us0[i]-Ks[i]*error;
+		sim.update(u);
+	}
 /*************************************************************************
 	timespec T_start, T_end;
 
