@@ -13,8 +13,8 @@
 int main()
 {
 	car::System sys;
-	double dt=0.1;
-	double N=33;
+	double dt=0.01;
+	double N=201;
 
 	Vec5 x0=(Vec5()<<-5,-2,-1.2,0,0).finished();
 	car::State state0(x0);
@@ -29,11 +29,11 @@ int main()
 
 	iLQG<car>::Params params(M,R,Mf);
 
-	Vec2 umin=Vec2::Ones()*4;
-	Vec2 umax=Vec2::Ones()*4;
+	Vec2 umin=-Vec2::Ones()*2;
+	Vec2 umax=Vec2::Ones()*2;
 	
 	iLQG<car> ilqg(sys,dt);
 	ilqg.init(state0, list_u0, list_ref, params, umin, umax,N);
-	ilqg.evaluate(-1,20,list_u0);
+	ilqg.evaluate(-1,10,list_u0);
 	return 0;
 }

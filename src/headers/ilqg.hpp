@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <type.hpp>
 
+
 template<typename Robot> class iLQG
 {
 	public:
@@ -19,7 +20,6 @@ template<typename Robot> class iLQG
 		typedef typename Robot::State State;
 		typedef typename Robot::DState DState;
 		typedef typename Robot::State Ref;
-
 		static const size_t M=Robot::M;
 		static const size_t N=Robot::N;
 		
@@ -75,12 +75,12 @@ protected:
 		bool box(VecN &x, Eigen::Matrix<int,N,1> & xstate, VecN const & xmin, VecN const & xmax);
 
 		Vec2 dV;
-		double alpha;
+//		double alpha;
 		constexpr static double dalpha1=0.25;
 		constexpr static double dalpha2=2;
 		constexpr static double alpha1=0.1;
 		constexpr static double alpha2=0.5; 
-		constexpr static double alpha_min=1e-4;
+		constexpr static double alpha_min=1e-12;
 
 	public:
 		iLQG(System const & sys, double const & dt);
@@ -120,7 +120,7 @@ template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::lis
 	list_ref.clear();
 	list_state0.clear();
 
-	alpha=1;
+//	alpha=1;
 	dV=Vec2::Zero();
 
 	J0=0;
@@ -156,7 +156,6 @@ template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::lis
 
 	std::cout<<"=========================================="<<std::endl;
 	std::cout<<"J0: "<<J0<<std::endl;
-	std::cout<<"x: "<<state.x.transpose()<<std::endl;
 	std::cout<<"=========================================="<<std::endl;
 	return true;
 }
@@ -166,8 +165,10 @@ template<typename Robot> void iLQG<Robot>::evaluate(double const & tolerance, si
 	std::list<MatNM> list_K;
 	std::list<VecN> list_ku;
 
+
 	for(int i=0; i<itr_max; i++)
 	{
+
 		backwards(list_K, list_ku);
 		double J1=forwards(list_K,list_ku);
 
@@ -175,11 +176,11 @@ template<typename Robot> void iLQG<Robot>::evaluate(double const & tolerance, si
 			break;
 
 		J0=J1;
-		std::cout<<"=========================================="<<std::endl;
+		std::cout<<"===================================================="<<std::endl;
+		std::cout<<"Iteration "<<i<<std::endl;
 		std::cout<<"J0: "<<J0<<std::endl;
-		std::cout<<"alpha: "<<alpha<<std::endl;
-		std::cout<<"x: "<<list_state0.back().x.transpose()<<std::endl;
-		std::cout<<"=========================================="<<std::endl;
+//		std::cout<<"alpha: "<<alpha<<std::endl;
+		std::cout<<"===================================================="<<std::endl;
 	}
 
 	typename std::list<U>::const_iterator itr_u0=list_u0.begin();
@@ -200,7 +201,8 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 
 	double J1;	
 
-	for(int count=10;count>0;count--)
+	double alpha=2;
+	for(int count=20;count>0;count--)
 	{
 		typename std::list<U>::const_iterator itr_u0=list_u0.begin();
 		typename std::list<State>::const_iterator itr_state0=list_state0.begin();
@@ -224,7 +226,10 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 
 		list_state.clear();
 		list_u1.clear();
-
+		
+//		std::cout<<"****************************"<<std::endl;
+//		std::cout<<"Minior Iteration "<<11-count<<std::endl;
+//		std::cout<<"****************************"<<std::endl;
 		for(int i=1;i<Num;i++)
 		{
 			list_state.push_back(state);
@@ -237,22 +242,24 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 			ku=*itr_ku;
 			K=*itr_K;
 
+			
 
 			dg=Robot::State::diff(state,state0);
 			u1=u0+alpha*ku+K*dg;
-			
-//			std::cout<<u1.transpose()<<std::endl;
-	/*************************************************************************
-			for(int i=0;i<4;i++)
+
+			for(int i=0;i<N;i++)
 				if(u1(i)>umax(i))
 					u1(i)=umax(i);
 				else
 					if(u1(i)<umin(i))
 						u1(i)=umin(i);
-	*************************************************************************/
+
 
 			error=Robot::State::diff(state, ref);
 			J1+=Robot::L(params.M,params.R,error,u1)*dt;
+
+			if(J1>J0)
+				break;
 
 			DState dstate(sys,state,u1);
 			state=state.update(dstate,dt);
@@ -264,7 +271,6 @@ template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & l
 			itr_ref++;
 			itr_ku++;
 			itr_K++;
-
 		}
 
 		list_state.push_back(state);
@@ -351,14 +357,22 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 	error=Robot::State::diff(*rit_state,*rit_ref);
 	Vx=Robot::Lx(Mf,error);
 	Vxx=Robot::Lxx(Mf,error);
-
-	rit_state++;
-	rit_ref++;
+	
+//	std::cout<<"+++++++++++++++++++++++++++++++++"<<std::endl;
+//	std::cout<<rit_state->g<<std::endl;
+//	std::cout<<rit_ref->g<<std::endl;
+//
+//	rit_state++;
+//	rit_ref++;
+//	std::cout<<rit_state->g<<std::endl;
+//	std::cout<<rit_ref->g<<std::endl;
+//	std::cout<<"+++++++++++++++++++++++++++++++++"<<std::endl;
 
 	list_K.clear();
 	list_ku.clear();
 
 	Eigen::LLT<MatNN> llt;
+
 	while(rit_state!=list_state0.crend())
 	{
 		State const &state=*rit_state;
@@ -423,13 +437,10 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 		MatNM K=-llt.solve(Qux); 
 
 
-/*************************************************************************
 		VecN dumax=umax-u;
 		VecN dumin=umin-u;
 
 		Eigen::Matrix<int,N,1> ku_state=Eigen::Matrix<int,N,1>::Zero();
-
-//		std::cout<<ku.transpose()<<std::endl;
 		
 		if(box(ku,ku_state,dumin,dumax))
 		{
@@ -457,7 +468,6 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 				if(ku_state(i))
 					K.row(i)=Eigen::Matrix<double,1,iLQG<Robot>::M>::Zero();
 		}
-*************************************************************************/
 
 		MatMN Kt=K.transpose();
 

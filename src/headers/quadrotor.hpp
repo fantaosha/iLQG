@@ -14,7 +14,7 @@
 #include<functional>
 
 #include<Eigen/Dense>
-#include<mat.h>
+//#include<mat.h>
 #include<liegroup.hpp>
 
 struct quadrotor
@@ -63,6 +63,7 @@ struct quadrotor
 			Vec6 a; // body twist accelebration;
 
 			DState(const System & sys, const State & state, Vec4 u); // compute body velocity
+			DState(DState k1, DState k2, DState k3, DState k4); // compute average body velocity for RK4
 		};
 
 	public:
@@ -205,7 +206,7 @@ struct quadrotor
 							  r2*SE3::ad(SE3::e[4]),
 							  r2*SE3::ad(SE3::e[5])).finished();
 			
-			Lxx.block(0,0,6,6)+=DM1+DM2;	
+			Lxx.block(0,0,6,6)-=DM1+DM2;	
 
 			return Lxx;
 		}
@@ -251,6 +252,7 @@ quadrotor::State quadrotor::State::update(const DState & dstate, double h)
 	return state_next;
 }
 
+/*************************************************************************
 void quadrotor::State::save(const std::list<State> & states, std::string path)
 {
 	MATFile *result;
@@ -337,6 +339,7 @@ void quadrotor::State::save(const std::list<State> & states, std::string path)
 	matPutVariable(result,"omega",omega);
 	mxDestroyArray(omega);
 }
+*************************************************************************/
 
 Vec12 quadrotor::State::diff(State const & state, State const & ref)
 {
@@ -351,4 +354,9 @@ quadrotor::DState::DState(const System & sys, const State & state, Vec4 u)
 	a=dstate.tail(6);
 }
 
+quadrotor::DState::DState(DState k1, DState k2, DState k3, DState k4)
+{
+	v=(k1.v+2*k2.v+2*k3.v+k4.v)/6;
+	a=(k1.a+2*k2.a+2*k3.a+k4.a)/6;
+}
 #endif
