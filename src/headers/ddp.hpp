@@ -7,7 +7,6 @@
 #ifndef _DDP
 #define _DDP
 #include <liegroup.hpp>
-#include <snOPT.hpp>
 #include <Eigen/Cholesky>
 #include <algorithm>
 #include <type.hpp>
@@ -40,12 +39,12 @@ template<typename Robot> class DDP
 			double mumax;
 			double mumin;
 
-			MatMM M;
-			MatMM Mf;
+			MatMM Q;
+			MatMM Qf;
 			MatNN R;
 
-			Params(MatMM const & M_=MatMM::Identity(), MatNN const & R_=MatNN::Identity(), MatMM const & Mf_=50*MatMM::Identity(),
-				   double mu_=1,  double dmu0_=1.6, double mumin_=1e-5, double mumax_=1e5): mu(mu_), mumin(mumin_), mumax(mumax_), dmu0(dmu0_), M(M_), Mf(Mf_), R(R_)
+			Params(MatMM const & Q_=MatMM::Identity(), MatNN const & R_=MatNN::Identity(), MatMM const & Qf_=50*MatMM::Identity(),
+				   double mu_=1,  double dmu0_=1.6, double mumin_=1e-5, double mumax_=1e5): mu(mu_), mumin(mumin_), mumax(mumax_), dmu0(dmu0_), Q(M_), Qf(Mf_), R(R_)
 			{
 			}
 		};
@@ -56,14 +55,14 @@ protected:
 
 		Params params;
 
-		size_t Num;
+		size_t num;
 
 		State state0;
 
-		std::list<U> list_u0;
-		std::list<U> list_du;
-		std::list<Ref> list_ref;
-		std::list<State> list_state0;
+		std::vector<U> us0;
+		std::vector<U> dus;
+		std::vector<Ref> refs;
+		std::vector<State> states0;
 
 		double J0;
 
@@ -83,70 +82,72 @@ protected:
 
 	public:               
 		DDP(System const & sys, double const & dt);
-		bool init(State const & state0, std::list<U> const & list_u0, std::list<Ref> const & list_ref, Params const & params, size_t const & Num);
-		void iterate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u);
-		void forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku);
-		void backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku);
+		bool init(State const & state0, std::vector<U> const & us0, std::vector<Ref> const & refs, Params const & params, size_t const & num);
+		void iterate(double const & tolerance, size_t const & itr_max, std::vector<U> & us);
+		void forwards(std::vector<MatNM> const & Ks, std::vector<VecN> const & kus);
+		void backwards(std::vector<MatNM> &Ks, std::vector<VecN> &kus);
 };
 
 template <typename Robot> DDP<Robot>::DDP(System const & sys_, double const & dt_):sys(sys_), dt(dt_), Num(0), a(2)
 {
 }
 
-template <typename Robot> bool DDP<Robot>::init(State const & state0_, std::list<U> const & list_u0_, std::list<Ref> const & list_ref_, Params const & params_, size_t const & Num_)
+template <typename Robot> bool DDP<Robot>::init(State const & state0_, std::vector<U> const & us0_, std::vector<Ref> const & refs_, Params const & params_, size_t const & num_)
 {
-	if(list_ref_.size()<Num_+1)
+	if(refs_.size()<Num_+1)
 	{
 		std::cout<<"ERROR: Not enough references."<<std::endl;
 		return false;
 	}
 
-	if(list_u0_.size()<Num)
+	if(us0_.size()<Num)
 	{
 		std::cout<<"ERROR: Not enough control inputs."<<std::endl;
 		return false;
 	}
 
 	params=params_;
-	Num=Num_;
+	num=num_;
 	state0=state0_;
 
-	list_u0.clear();
-	list_du.clear();
-	list_ref.clear();
-	list_state0.clear();
+	us0.clear();
+	dus.clear();
+	refs.clear();
+	states0.clear();
 
-//	alpha=1;
+	us0.reserve(num);
+	dus.reserve(num);
+	refs.reserve(num+1);
+	states0.reserve(num+1);
+
+	for(int i=0;i<num;i++)
+	{
+		us0[i]=us0_[i];
+		refs[i]=refs_[i];
+	}
+	refs[num]=refs_[num];
+
 	dV=Vec2::Zero();
 
 	J0=0;
 
-	typename std::list<U>::const_iterator itr_u=list_u0_.begin();
-	typename std::list<Ref>::const_iterator itr_ref=list_ref_.begin();
-
 	State state=state0;
-	list_state0.push_back(state);
+	states0[0]=state0;
 
 	VecM error;
 
-	for(int i=0;i<Num;i++)
+	for(int i=0;i<=num;i++)
 	{
-		error=Robot::State::diff(state, *itr_ref);
-		J0+=Robot::L(params.M,params.R,error,*itr_u)*dt;
+		error=Robot::State::diff(state, refs[i]);
+		J0+=Robot::L(params.M,params.R,error,us0[i])*dt;
 
-		DState dstate(sys,state,*itr_u);
+		DState dstate(sys,state,us0[i]);
 		state=state.update(dstate,dt);
 
-		list_state0.push_back(state);
-		list_u0.push_back(*itr_u);
-		list_ref.push_back(*itr_ref);
-
-		itr_u++;
-		itr_ref++;
+		states0.push_back(state);
 	}
 	
-	list_ref.push_back(*itr_ref);
-	error=Robot::State::diff(state, *itr_ref);
+	error=Robot::State::diff(state, refs[num]);
 	J0+=Robot::L(params.Mf,MatNN::Zero(),error,VecN::Zero());
 
 
@@ -355,8 +356,9 @@ template<typename Robot> void DDP<Robot>::forwards(std::list<MatNM> const & list
 //	std::cout<<state.g<<std::endl;
 }
 
-template<typename Robot> void DDP<Robot>::backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku)
+template<typename Robot> void DDP<Robot>::backwards(std::vector<MatNM> & Ks, std::list<VecN> & kus)
 {
+	// Initialization
 	VecM Qx;
 	VecN Qu;
 	MatMM Qxx;
@@ -380,44 +382,37 @@ template<typename Robot> void DDP<Robot>::backwards(std::list<MatNM> &list_K, st
 
 	VecM error;
 
-	MatMM const & M=params.M;
+	MatMM const & Q=params.Q;
 	MatNN const & R=params.R;
-	MatMM const & Mf=params.Mf;
+	MatMM const & Qf=params.Qf;
 
-	dV=Vec2::Zero();
+	Ks.clear();
+	kus.clear();
 
-	static const MatNN Id=MatNN::Identity();
-
-	typename std::list<State>::const_reverse_iterator rit_state=list_state0.crbegin();
-	typename std::list<Ref>::const_reverse_iterator rit_ref=list_ref.crbegin();
-	typename std::list<U>::const_reverse_iterator rit_u=list_u0.crbegin();
-
-	error=Robot::State::diff(*rit_state,*rit_ref);
-	Vx=Robot::Lx(Mf,error);
-	Vxx=Robot::Lxx(Mf,error);
+	Ks.reserve(num);
+	kus.reserve(num);
 	
-	list_K.clear();
-	list_ku.clear();
+	dV=Vec2::Zero();
+	
+	// Start back pass
+	error=Robot::State::diff(states[num],refs[num]);
+	
+	Vx=Robot::Lx(Qf,error);
+	Vxx=Robot::Lxx(Qf,error);
 
 	Eigen::LLT<MatNN> llt;
 
-	rit_state++;
-	rit_ref++;
-
-	while(rit_state!=list_state0.crend())
+	for(int i=num-1;i>=0;i--)
 	{
-		State const &state=*rit_state;
-		U const & u=*rit_u;
-		Ref const & ref=*rit_ref;
+		error=Robot::State::diff(states[i],refs[i]);
 
-		error=Robot::State::diff(*rit_state,*rit_ref);
-		Lx=Robot::Lx(M,error)*dt;
-		Lu=Robot::Lu(R,u)*dt;
-		Lxx=Robot::Lxx(M,error)*dt;
-		Luu=Robot::Luu(R,u)*dt;
+		Lx=Robot::Lx(Q,error)*dt;
+		Lxx=Robot::Lxx(Q,error)*dt;
+		Lu=Robot::Lu(R,error)*dt;
+		Luu=Robot::Luu(R,error)*dt;
 
-		Robot::linearize(sys, dt, state, u, A, B);
-	
+		Robot::linearize(sys,dt,state,us0[i],A,B);
+
 		At=A.transpose();
 		Bt=B.transpose();
 
@@ -428,15 +423,8 @@ template<typename Robot> void DDP<Robot>::backwards(std::list<MatNM> &list_K, st
 		Qux=Bt*Vxx*A;
 		Qxu=Qux.transpose();
 
-//		std::cout<<Qx.transpose()<<std::endl;
-//		std::cout<<Qu.transpose()<<std::endl;
-//		std::cout<<Qxx<<std::endl;
-//		std::cout<<Qux<<std::endl;
-//		std::cout<<Quu<<std::endl;
-
 		double mu=params.mu;
 		double dmu=1;
-
 
 		while(1)
 		{
@@ -444,44 +432,20 @@ template<typename Robot> void DDP<Robot>::backwards(std::list<MatNM> &list_K, st
 			llt.compute(Quum);
 			
 			if(llt.info()==Eigen::Success)
-			{
-				dmu=std::min(1/params.dmu0,dmu/params.dmu0);
-				mu=std::max(mu*dmu,params.mumin);
-
 				break;
-			}
 
 			dmu=std::max(params.dmu0, dmu*params.dmu0);
 			mu=std::max(params.mumin,mu*dmu);
-
-			if (mu>params.mumax)
-				break;
 		}
 		
 		if (mu>params.mumax)
 			break;
-		
-		VecN ku=-llt.solve(Qu);
-		MatNM K=-llt.solve(Qux); 
 
-		assert(!std::isnan(ku[0]));
-		assert(!std::isnan(K(0,0)));
+		U dumin=umin-us0[i];
+		U dumax=umax-us0[i];
 
-		MatMN Kt=K.transpose();
-
-
-		Vxx=Qxx+Kt*Quum*K+Kt*Qux+Qxu*K;
-		Vx=Qx+Kt*(Quum*ku+Qu)+Qxu*ku;
-		
-		dV(0)+=ku.dot(Qu);
-		dV(1)+=0.5*ku.dot(Quu*ku);
-
-		list_ku.push_front(ku);
-		list_K.push_front(K);
-
-		rit_state++;
-		rit_ref++;
-		rit_u++;
+		dmu=std::min(1/params.dmu0,dmu/params.dmu0);
+		mu=std::max(mu*dmu,params.mumin);
 	}
 }
 
