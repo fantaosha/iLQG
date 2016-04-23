@@ -70,8 +70,9 @@ template<size_t N> void assign(Eigen::Matrix<double,N,1> &v1, Eigen::MatrixXd co
 template<size_t N> void boxQP(Eigen::Matrix<double,N,N> const & H,    Eigen::Matrix<double,N,1> const & g, 
 		                      Eigen::Matrix<double,N,1> const & xmin, Eigen::Matrix<double,N,1> const & xmax, 
 							  Eigen::Matrix<double,N,1> const & x0,
-							  Eigen::Matrix<double,N,1>       &  x,   int & result, 
-							  Eigen::Array<int,N,1> & free)
+							  Eigen::Matrix<double,N,1>       &  x, 
+							  Eigen::MatrixXd                 & Hfree, Eigen::Array<int,N,1> & free,
+							  int & result)
 {
 	typedef Eigen::Matrix<double,N,N> MatNd;
 	typedef Eigen::Matrix<double,N,1> VecNd;
@@ -108,7 +109,6 @@ template<size_t N> void boxQP(Eigen::Matrix<double,N,N> const & H,    Eigen::Mat
 	double J0=J;
 	
 	double gnom;
-	Mat Hfree, Hfreet;
 
 	size_t iter;
 

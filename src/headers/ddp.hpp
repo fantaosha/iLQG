@@ -85,7 +85,7 @@ protected:
 		bool init(State const & state0, std::vector<U> const & us0, std::vector<Ref> const & refs, Params const & params, size_t const & num);
 		void iterate(double const & tolerance, size_t const & itr_max, std::vector<U> & us);
 		void forwards(std::vector<MatNM> const & Ks, std::vector<VecN> const & kus);
-		void backwards(std::vector<MatNM> &Ks, std::vector<VecN> &kus);
+		int backwards(std::vector<MatNM> &Ks, std::vector<VecN> &kus);
 };
 
 template <typename Robot> DDP<Robot>::DDP(System const & sys_, double const & dt_):sys(sys_), dt(dt_), Num(0), a(2)
@@ -356,7 +356,7 @@ template<typename Robot> void DDP<Robot>::forwards(std::list<MatNM> const & list
 //	std::cout<<state.g<<std::endl;
 }
 
-template<typename Robot> void DDP<Robot>::backwards(std::vector<MatNM> & Ks, std::list<VecN> & kus)
+template<typename Robot> int DDP<Robot>::backwards(std::vector<MatNM> & Ks, std::list<VecN> & kus)
 {
 	// Initialization
 	VecM Qx;
@@ -423,29 +423,15 @@ template<typename Robot> void DDP<Robot>::backwards(std::vector<MatNM> & Ks, std
 		Qux=Bt*Vxx*A;
 		Qxu=Qux.transpose();
 
-		double mu=params.mu;
-		double dmu=1;
+		Quum=Quu+mu*MatNN::Identity();
 
-		while(1)
-		{
-			Quum=Quu+mu*MatNN::Identity();
-			llt.compute(Quum);
-			
-			if(llt.info()==Eigen::Success)
-				break;
-
-			dmu=std::max(params.dmu0, dmu*params.dmu0);
-			mu=std::max(params.mumin,mu*dmu);
-		}
+		llt.compute(Quum);
+		if(llt.info()==Eigen::Success)
+			return i;
 		
-		if (mu>params.mumax)
-			break;
-
 		U dumin=umin-us0[i];
 		U dumax=umax-us0[i];
 
-		dmu=std::min(1/params.dmu0,dmu/params.dmu0);
-		mu=std::max(mu*dmu,params.mumin);
 	}
 }
 
