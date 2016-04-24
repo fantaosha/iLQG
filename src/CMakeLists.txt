@@ -27,14 +27,14 @@ message(${CMAKE_CXX_FLAGS})
 #add_executable(quadrotor quadrotor.cpp)
 #target_link_libraries(quadrotor ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
 
-#add_executable(quadrotor_ddp quadrotor_ddp.cpp)
-#target_link_libraries(quadrotor_ddp ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
+add_executable(quadrotor_ddp quadrotor_ddp.cpp)
+target_link_libraries(quadrotor_ddp ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
 
 #add_executable(quadrotor_lqr quadrotor_lqr.cpp)
 #target_link_libraries(quadrotor_lqr ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})
 
-add_executable(car_ddp car_ddp.cpp)
-target_link_libraries(car_ddp)
+#add_executable(car_ddp car_ddp.cpp)
+#target_link_libraries(car_ddp)
 
 #add_executable(test test.cpp)
 #target_link_libraries(test ${SNOPT_LIBRARIES} ${MATLAB_LIBRARIES})

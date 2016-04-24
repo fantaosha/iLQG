@@ -119,7 +119,8 @@ template<typename Robot> class Sim
 		void save(std::string path) const
 		{
 			State::save(states[0],path);
-
+			
+			std::cout<<path<<std::endl;
 			MATFile *file;
 			void *p;
 

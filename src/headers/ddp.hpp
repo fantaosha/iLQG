@@ -167,9 +167,9 @@ template <typename Robot> bool DDP<Robot>::init(State const & x0_, std::vector<U
 	J0+=Robot::L(params.Qf,MatNN::Zero(),error,VecN::Zero());
 
 
-	std::cout<<"=========================================="<<std::endl;
-	std::cout<<"J0: "<<J0<<std::endl;
-	std::cout<<"=========================================="<<std::endl;
+//	std::cout<<"=========================================="<<std::endl;
+//	std::cout<<"J0: "<<J0<<std::endl;
+//	std::cout<<"=========================================="<<std::endl;
 	return true;
 }
 
@@ -188,9 +188,9 @@ template<typename Robot> void DDP<Robot>::iterate(int const & itr_max, std::vect
 
 	for(int i=0;i<itr_max;i++)
 	{
-		std::cout<<"========================================================================"<<std::endl;
-		std::cout<<"Iteration # "<<i<<std::endl;
-		std::cout<<"------------------------------------------------------------------------"<<std::endl;
+//		std::cout<<"========================================================================"<<std::endl;
+//		std::cout<<"Iteration # "<<i<<std::endl;
+//		std::cout<<"------------------------------------------------------------------------"<<std::endl;
 		// backward pass
 		bool backPassDone=false;
 		while(!backPassDone)
@@ -261,20 +261,21 @@ template<typename Robot> void DDP<Robot>::iterate(int const & itr_max, std::vect
 			}
 		}
 
-		std::cout<<"--------------------------------------------"<<std::endl;
-		std::cout<<"Results"<<std::endl;
-		std::cout<<"--------------------------------------------"<<std::endl;
+//		std::cout<<"--------------------------------------------"<<std::endl;
+//		std::cout<<"Results"<<std::endl;
+//		std::cout<<"--------------------------------------------"<<std::endl;
 		if(fwdPassDone)
 		{
 			dlambda=std::min(dlambda/params.lambdaFactor, 1.0/params.lambdaFactor);
 			lambda=lambda*dlambda*(lambda>params.lambdaMin);
 			
-			std::cout<<"Improved"<<std::endl;
-			std::cout<<"lambda: "<<lambda<<std::endl;
-			std::cout<<"dlambda: "<<dlambda<<std::endl;
-			std::cout<<"Jn: "<<Jn<<std::endl;
-			std::cout<<"final state: "<<xns[num].x.transpose()<<std::endl;
-
+//			std::cout<<"Improved"<<std::endl;
+//			std::cout<<"lambda: "<<lambda<<std::endl;
+//			std::cout<<"dlambda: "<<dlambda<<std::endl;
+//			std::cout<<"Jn: "<<Jn<<std::endl;
+			
+//			std::cout<<"Jn: "<<Jn<<std::endl;
+//			std::cout<<Robot::State::diff(xns[num],xrefs[num]).transpose()<<std::endl;
 			xs=xns;
 			us=uns;
 			J0=Jn;
@@ -292,15 +293,15 @@ template<typename Robot> void DDP<Robot>::iterate(int const & itr_max, std::vect
 			dlambda=std::max(dlambda*params.lambdaFactor, params.lambdaFactor);
 			lambda=std::max(lambda*dlambda, params.lambdaMin);
 
-			std::cout<<"No step found"<<std::endl;
-			std::cout<<"lambda: "<<lambda<<std::endl;
-			std::cout<<"dlambda: "<<dlambda<<std::endl;
-			std::cout<<"Jn: "<<Jn<<std::endl;
+//			std::cout<<"No step found"<<std::endl;
+//			std::cout<<"lambda: "<<lambda<<std::endl;
+//			std::cout<<"dlambda: "<<dlambda<<std::endl;
+//			std::cout<<"Jn: "<<Jn<<std::endl;
 			
 			if (lambda>params.lambdaMax)
 				break;
 		}
-		std::cout<<"========================================================================"<<std::endl<<std::endl;
+//		std::cout<<"========================================================================"<<std::endl<<std::endl;
 	}
 
 	if(us0.capacity()<num)

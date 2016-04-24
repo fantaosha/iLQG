@@ -7,14 +7,13 @@
 #ifndef QUADROTOR
 #define QUADROTOR
 
-#include<list>
 #include<iostream>
 #include<cmath>
 #include<string>
 #include<functional>
 
 #include<Eigen/Dense>
-//#include<mat.h>
+#include<mat.h>
 #include<liegroup.hpp>
 
 struct quadrotor
@@ -53,7 +52,7 @@ struct quadrotor
 			State(Mat3 R0, Vec3 x0, Vec3 w0, Vec3 v0);
 
 			State update(const DState & dstate, double h); // compute next state by Euler method
-			static void  save(const std::list<State> &, std::string);
+			static void  save(const std::vector<State> &, std::string);
 			static Vec12 diff(State const & state, State const & ref);
 		};
 		
@@ -168,7 +167,7 @@ struct quadrotor
 		static Vec12 Lx(const Mat12 &M, const Vec12 &dg)
 		{
 			Vec12 Lx=M*dg;
-			Lx.head(6)=SE3::dexpinv(-dg.head(6))*Lx.head(6);
+			Lx.head(6)=SE3::dexpinv(-dg.head(6)).transpose()*Lx.head(6);
 
 			return Lx;
 		}
@@ -187,8 +186,8 @@ struct quadrotor
 			Lxx.block(0,0,6,6)=dexpinvT*M.block(0,0,6,6)*dexpinv;
 			Lxx.block(0,6,6,6)=dexpinvT*M.block(0,6,6,6);
 			Lxx.block(6,0,6,6)=M.block(0,6,6,6).transpose();
-/*************************************************************************
 
+/*************************************************************************
 			Eigen::Matrix<double,1,6> r1=dg.transpose()*M.block(0,0,12,6);
 
 			Mat6 DM1=-dexpinvT*(Mat6()<<r1*ddexpinv.block(0,0,6,6),
@@ -254,8 +253,7 @@ quadrotor::State quadrotor::State::update(const DState & dstate, double h)
 	return state_next;
 }
 
-/*************************************************************************
-void quadrotor::State::save(const std::list<State> & states, std::string path)
+void quadrotor::State::save(const std::vector<State> & states, std::string path)
 {
 	MATFile *result;
 
@@ -270,7 +268,7 @@ void quadrotor::State::save(const std::list<State> & states, std::string path)
 	
 	result=matOpen(path.c_str(),"w");
 
-	std::list<State>::const_iterator it_state;
+	std::vector<State>::const_iterator it_state;
 
 	it_state=states.cbegin();
 	dims[0]=3;
@@ -341,7 +339,6 @@ void quadrotor::State::save(const std::list<State> & states, std::string path)
 	matPutVariable(result,"omega",omega);
 	mxDestroyArray(omega);
 }
-*************************************************************************/
 
 Vec12 quadrotor::State::diff(State const & state, State const & ref)
 {
