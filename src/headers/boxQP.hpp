@@ -108,8 +108,6 @@ template<size_t N> void boxQP(Eigen::Matrix<double,N,N> const & H,    Eigen::Mat
 	double J=x.dot(0.5*H*x+g);
 	double J0=J;
 	
-	double gnom;
-
 	size_t iter;
 
 	Eigen::LLT<Mat> llt;
