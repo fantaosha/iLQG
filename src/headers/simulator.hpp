@@ -45,6 +45,16 @@ template<typename Robot> class Sim
 		{
 		}
 
+		~Sim()
+		{
+			std::vector<State>().swap(states[0]);
+			std::vector<State>().swap(states[1]);
+			std::vector<State>().swap(states[2]);
+			std::vector<State>().swap(states[3]);
+
+			std::vector<U>().swap(inputs);
+		}
+
 		State get_state() const
 		{
 			return states[0].back();
