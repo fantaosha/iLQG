@@ -1,19 +1,20 @@
 /*************************************************************************
-    > File Name: ilqg.hpp
+    > File Name: DDP.h
     > Author: Taosha Fan
     > Mail: tfan1@jhu.edu 
-    > Created Time: Wed 20 Apr 2016 03:48:14 PM CDT
+    > Created Time: Fri 22 Apr 2016 07:15:29 AM CDT
  ************************************************************************/
-#ifndef _ILQG
-#define _ILQG
-#include <liegroup.hpp>
-#include <snOPT.hpp>
+#ifndef _iLQG
+#define _iLQG
+#include <cmath>
 #include <Eigen/Cholesky>
 #include <algorithm>
 #include <type.hpp>
+#include <boxQP.hpp>
+#include <snOPT.hpp>
 
 
-template<typename Robot> class iLQG
+template<typename Robot> class iLQG 
 {
 	public:
 		typedef typename Robot::System System;
@@ -33,294 +34,323 @@ template<typename Robot> class iLQG
 
 		struct Params
 		{
-			double mu;
+			// parameters to regularize 
+			double lambda;
+			double dlambda;
+			double lambdaFactor;
+			double lambdaMax;
+			double lambdaMin;
 
-			double dmu0;
+			// parameter for line search
+			double alpha;
+			double dalphaFactor;
+			double alphaMin;
 
-			double mumax;
-			double mumin;
+			// minimal reduction ration
+			double reductionRatioMin;
 
-			MatMM M;
-			MatMM Mf;
+			// exit criterion
+			double tolFun;
+			double tolGrad;
+
+			// cost function
+			MatMM Q;
+			MatMM Qf;
 			MatNN R;
 
-			Params(MatMM const & M_=MatMM::Identity(), MatNN const & R_=MatNN::Identity(), MatMM const & Mf_=50*MatMM::Identity(),
-				   double mu_=1,  double dmu0_=1.6, double mumin_=1e-5, double mumax_=1e5): mu(mu_), mumin(mumin_), mumax(mumax_), dmu0(dmu0_), M(M_), Mf(Mf_), R(R_)
+			Params(MatMM const & Q_=MatMM::Identity(),   MatNN const & R_=MatNN::Identity(),   MatMM const & Qf_=50*MatMM::Identity(),
+				          double lambda_=1, double lambdaMin_=1e-5, double lambdaMax_=1e10, double dlambda_=1, double lambdaFactor_=1.6,
+						  double  alpha_=1, double  alphaMin_=1e-3, double  dalphaFactor_=pow(1e-3,0.1), double reductionRatioMin_=0,
+						  double  tolFun_=1e-7, double  tolGrad_ =1e-4): Q(Q_), Qf(Qf_), R(R_),
+																		 lambda(lambda_), lambdaMin(lambdaMin_), lambdaMax(lambdaMax_), dlambda(dlambda_), lambdaFactor(lambdaFactor_), 
+																		 alpha(alpha_), dalphaFactor(dalphaFactor_), reductionRatioMin(reductionRatioMin_), 
+																		 tolFun(tolFun_), tolGrad(tolGrad_) 
 			{
 			}
 		};
-
-	protected:
-		typedef	snOPT<N> snopt; 
 
 protected:
 		System const sys;
 		double const dt;
 
-		Params params;
+		Params params; // parameters to control iLQG
 
-		size_t Num;
+		int num; // number of steps
 
-		State state0;
-		VecN umax,umin;
+		State x0; // initial state
 
-		std::list<U> list_u0;
-		std::list<U> list_u1;
-		std::list<Ref> list_ref;
-		std::list<State> list_state0;
+		std::vector<State> xs; // states
+		std::vector<Ref> xrefs; // reference states
+
+		std::vector<U> us; // control inputs 
+		U umin;
+		U umax;
 
 		double J0;
+		Vec2 dJ;
 
-		int box_opt(MatNN const & Quu, VecN const & Qu, VecN const & dumin, VecN const & dumax, VecN & ku, Eigen::Matrix<int,N,1> & ku_state);
-		bool box(VecN &x, Eigen::Matrix<int,N,1> & xstate, VecN const & xmin, VecN const & xmax);
-
-		Vec2 dV;
-//		double alpha;
-		constexpr static double dalpha1=0.25;
-		constexpr static double dalpha2=2;
-		constexpr static double alpha1=0.1;
-		constexpr static double alpha2=0.5; 
-		constexpr static double alpha_min=1e-12;
-
-	public:
+		bool isbounded(VecN &x, Eigen::Matrix<int,N,1> & free, VecN const & xmin, VecN const & xmax);
+		int snopt(MatNN const & Quu, VecN const & Qu, VecN const & dumin, VecN const & dumax, VecN & ku, Eigen::Matrix<int,N,1>  & free);	
+		double getGnorm(std::vector<VecN> const & kus, std::vector<VecN> const & us);
+	public:               
 		iLQG(System const & sys, double const & dt);
-		bool init(State const & state0, std::list<U> const & list_u0, std::list<Ref> const & list_ref, Params const & params, VecN const & umin, VecN const & umax, size_t const & Num);
-		void evaluate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u);
-		double forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku);
-		void backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku);
+		bool init(State const & xs0, std::vector<U> const & us0, std::vector<Ref> const & xrefs, Params const & params, U const & umin, U const & umax, int const & num);
+		void iterate(int const & itr_max, std::vector<U> & us);
+		void forwards(std::vector<MatNM> const & Ks, std::vector<VecN> const & kus, double const & alpha, std::vector<State> & xns, std::vector<U> & uns, double & Jn);
+		int backwards(std::vector<MatNM> &Ks, std::vector<VecN> &kus, double const & lambda);
 };
 
-template <typename Robot> iLQG<Robot>::iLQG(System const & sys_, double const & dt_):sys(sys_), dt(dt_), Num(0)
+template <typename Robot> double iLQG<Robot>::getGnorm(std::vector<VecN> const & kus, std::vector<VecN> const & us0)
 {
-	snopt::init();
+	assert(kus.size()==num);
+	assert(us.size()==num);
+
+	double sum=0;
+	for(int i=0;i<num;i++)
+	{
+		sum+=(kus[i].array().abs()/(us[i].array().abs()+1)).maxCoeff();
+	}
+
+	return sum/num;
 }
 
-template <typename Robot> bool iLQG<Robot>::init(State const & state0_, std::list<U> const & list_u0_, std::list<Ref> const & list_ref_, Params const & params_, VecN const & umin_, VecN const & umax_, size_t const & Num_)
+template <typename Robot> iLQG<Robot>::iLQG(System const & sys_, double const & dt_):sys(sys_), dt(dt_), num(0)
 {
-	if(list_ref_.size()<Num_)
+	snOPT<Robot::N>::init();
+}
+
+template <typename Robot> bool iLQG<Robot>::init(State const & x0_, std::vector<U> const & us_, std::vector<Ref> const & xrefs_, Params const & params_, U const & umin_, U const & umax_, int const & num_)
+{
+	if(xrefs_.size()<num_+1)
 	{
 		std::cout<<"ERROR: Not enough references."<<std::endl;
 		return false;
 	}
 
-	if(list_u0_.size()<Num_-1)
+	if(us_.size()<num)
 	{
 		std::cout<<"ERROR: Not enough control inputs."<<std::endl;
 		return false;
 	}
 
 	params=params_;
-	Num=Num_;
-	state0=state0_;
+	num=num_;
+	x0=x0_;
+
+	us.reserve(num);
+	xs.reserve(num+1);
+	xrefs.reserve(num+1);
+	us.resize(num,VecN::Zero());
+	xs.resize(num+1,x0);
+	xrefs.resize(num+1,x0);
+	
 	umin=umin_;
 	umax=umax_;
 
-	list_u0.clear();
-	list_u1.clear();
-	list_ref.clear();
-	list_state0.clear();
+	for(int i=0;i<num;i++)
+	{
+		us[i]=clamp<N>(us_[i],umin,umax);
+		xrefs[i]=xrefs_[i];
+	}
+	xrefs[num]=xrefs_[num];
 
-//	alpha=1;
-	dV=Vec2::Zero();
-
-	J0=0;
-
-	typename std::list<U>::const_iterator itr_u=list_u0_.begin();
-	typename std::list<Ref>::const_iterator itr_ref=list_ref_.begin();
-
-	State state=state0;
-	list_state0.push_back(state);
+	xs[0]=x0;
 
 	VecM error;
 
-	for(int i=1;i<Num;i++)
+	for(int i=0;i<num;i++)
 	{
-		error=Robot::State::diff(state, *itr_ref);
-		J0+=Robot::L(params.M,params.R,error,*itr_u)*dt;
+		error=Robot::State::diff(xs[i], xrefs[i]);
+		J0+=Robot::L(params.Q,params.R,error,us[i])*dt;
 
-		DState dstate(sys,state,*itr_u);
-		state=state.update(dstate,dt);
-
-		list_state0.push_back(state);
-		list_u0.push_back(*itr_u);
-		list_ref.push_back(*itr_ref);
-
-		itr_u++;
-		itr_ref++;
+		DState dstate(sys,xs[i],us[i]);
+		xs[i+1]=xs[i].update(dstate,dt);
 	}
 	
-	list_ref.push_back(*itr_ref);
-	error=Robot::State::diff(state, *itr_ref);
-	J0+=Robot::L(params.Mf,MatNN::Zero(),error,VecN::Zero());
+	error=Robot::State::diff(xs[num], xrefs[num]);
+	J0+=Robot::L(params.Qf,MatNN::Zero(),error,VecN::Zero());
 
 
-	std::cout<<"=========================================="<<std::endl;
-	std::cout<<"J0: "<<J0<<std::endl;
-	std::cout<<"=========================================="<<std::endl;
+//	std::cout<<"=========================================="<<std::endl;
+//	std::cout<<"J0: "<<J0<<std::endl;
+//	std::cout<<"=========================================="<<std::endl;
 	return true;
 }
 
-template<typename Robot> void iLQG<Robot>::evaluate(double const & tolerance, size_t const & itr_max, std::list<U> & list_u)
+template<typename Robot> void iLQG<Robot>::iterate(int const & itr_max, std::vector<U> & us0)
 {
-	std::list<MatNM> list_K;
-	std::list<VecN> list_ku;
+	std::vector<MatNM> Ks;
+	std::vector<VecN> kus;
 
+	Ks.reserve(num);
+	Ks.resize(num, MatNM::Zero());
+	kus.reserve(num);
+	kus.resize(num, VecN::Zero());
 
-	for(int i=0; i<itr_max; i++)
+	double lambda=params.lambda;
+	double dlambda=params.dlambda;
+
+	for(int i=0;i<itr_max;i++)
 	{
-
-		backwards(list_K, list_ku);
-		double J1=forwards(list_K,list_ku);
-
-		if(fabs(J1-J0)/J0<tolerance)
-			break;
-
-		J0=J1;
-		std::cout<<"===================================================="<<std::endl;
-		std::cout<<"Iteration "<<i<<std::endl;
-		std::cout<<"J0: "<<J0<<std::endl;
-//		std::cout<<"alpha: "<<alpha<<std::endl;
-		std::cout<<"===================================================="<<std::endl;
-	}
-
-	typename std::list<U>::const_iterator itr_u0=list_u0.begin();
-	typename std::list<U>::iterator itr_u=list_u.begin();
-
-	while(itr_u0!=list_u0.end())
-	{
-		*itr_u=*itr_u0;
-
-		itr_u0++;
-		itr_u++;
-	}
-}
-
-template<typename Robot> double iLQG<Robot>::forwards(std::list<MatNM> const & list_K, std::list<VecN> const & list_ku)
-{
-	std::list<State> list_state;
-
-	double J1;	
-
-	double alpha=2;
-	for(int count=20;count>0;count--)
-	{
-		typename std::list<U>::const_iterator itr_u0=list_u0.begin();
-		typename std::list<State>::const_iterator itr_state0=list_state0.begin();
-		typename std::list<State>::const_iterator itr_ref=list_ref.begin();
-		typename std::list<U>::const_iterator itr_ku=list_ku.begin();
-		typename std::list<MatNM >::const_iterator itr_K=list_K.begin();
-
-		State state=list_state0.front();
-
-		Ref ref;
-		VecN u0;
-		VecN u1;
-
-		VecN ku;
-		MatNM K;
-
-		VecM error;
-		VecM dg;
-
-		J1=0;
-
-		list_state.clear();
-		list_u1.clear();
-		
-//		std::cout<<"****************************"<<std::endl;
-//		std::cout<<"Minior Iteration "<<11-count<<std::endl;
-//		std::cout<<"****************************"<<std::endl;
-		for(int i=1;i<Num;i++)
+//		std::cout<<"========================================================================"<<std::endl;
+//		std::cout<<"Iteration # "<<i<<std::endl;
+//		std::cout<<"------------------------------------------------------------------------"<<std::endl;
+		// backward pass
+		bool backPassDone=false;
+		while(!backPassDone)
 		{
-			list_state.push_back(state);
+			int result=backwards(Ks,kus,lambda);
 
-			state0=*itr_state0;
-			ref=*itr_ref;
-			u0=*itr_u0;
-		
+			if(result>=0)
+			{
+				dlambda=std::max(dlambda*params.lambdaFactor, params.lambdaFactor);
+				lambda=std::max(lambda*dlambda, params.lambdaMin);
 
-			ku=*itr_ku;
-			K=*itr_K;
+				if(lambda>params.lambdaMax)
+					break;
 
+				continue;
+			}
 			
+			backPassDone=true;
+		}
+	
+		double gnorm=getGnorm(kus,us);
 
-			dg=Robot::State::diff(state,state0);
-			u1=u0+alpha*ku+K*dg;
+		if(gnorm<params.tolGrad && lambda<1e-5)
+		{
+			dlambda=std::min(dlambda/params.lambdaFactor, 1.0/params.lambdaFactor);
+			lambda=lambda*dlambda*(lambda>params.lambdaMin);
+#ifdef PRINT
+			std::cout<<"SUCCESS: gradient norm = "<<gnorm" < tolGrad"<<std::endl
+#endif
 
-			for(int i=0;i<N;i++)
-				if(u1(i)>umax(i))
-					u1(i)=umax(i);
-				else
-					if(u1(i)<umin(i))
-						u1(i)=umin(i);
-
-
-			error=Robot::State::diff(state, ref);
-			J1+=Robot::L(params.M,params.R,error,u1)*dt;
-
-			if(J1>J0)
-				break;
-
-			DState dstate(sys,state,u1);
-			state=state.update(dstate,dt);
-			
-			list_u1.push_back(u1);
-
-			itr_u0++;
-			itr_state0++;
-			itr_ref++;
-			itr_ku++;
-			itr_K++;
+			break;
 		}
 
-		list_state.push_back(state);
+		// forward pass
+		bool fwdPassDone=false;
+		std::vector<State> xns;
+		std::vector<U> uns;
+		double Jn;
+		double actual;
+		double expected;
 
-		error=Robot::State::diff(state, ref);
-		J1+=Robot::L(params.Mf,MatNN::Zero(),error,U::Zero());
+		xns.reserve(num+1);
+		uns.reserve(num);
+		xns.resize(num+1,x0);
+		uns.resize(num,VecN::Zero());
 
-		double dJ=J1-J0;
-		
-		if(dJ>0)
+		if(backPassDone)
 		{
-//			std::cout<<"alpha: "<<alpha<<std::endl;
-//			std::cout<<"dalpha: "<<dalpha1<<std::endl;
-			alpha*=dalpha1;
-			
+			double alpha=params.alpha;
 
-			if(alpha<alpha_min)
+			while(alpha>params.alphaMin)
+			{
+				forwards(Ks, kus, alpha, xns, uns, Jn);
+				actual=J0-Jn;
+				expected=-alpha*dJ(0)-alpha*alpha*dJ(1);
+				double reductionRatio=-1;
+
+				if(expected>0)
+					reductionRatio=actual/expected;
+//				else
+//					std::cout<<"WARNING: non-positive expected reduction: should not occur"<<std::endl;
+
+				if(reductionRatio>params.reductionRatioMin)
+					fwdPassDone=true;
 				break;
 
-			continue;
+				alpha*=params.dalphaFactor;
+			}
+		}
+
+//		std::cout<<"--------------------------------------------"<<std::endl;
+//		std::cout<<"Results"<<std::endl;
+//		std::cout<<"--------------------------------------------"<<std::endl;
+		if(fwdPassDone)
+		{
+			dlambda=std::min(dlambda/params.lambdaFactor, 1.0/params.lambdaFactor);
+			lambda=lambda*dlambda*(lambda>params.lambdaMin);
+			
+//			std::cout<<"Improved"<<std::endl;
+//			std::cout<<"lambda: "<<lambda<<std::endl;
+//			std::cout<<"dlambda: "<<dlambda<<std::endl;
+//			std::cout<<"Jn: "<<Jn<<std::endl;
+			
+//			std::cout<<"Jn: "<<Jn<<std::endl;
+//			std::cout<<Robot::State::diff(xns[num],xrefs[num]).transpose()<<std::endl;
+			xs=xns;
+			us=uns;
+			J0=Jn;
+
+			if(actual<params.tolFun)
+			{
+#ifdef PRINT
+				std::cout<<"SUCCESS: cost change = "<<actual<<" < tolFun"<<std::endl;
+#endif
+				break;
+			}
 		}
 		else
 		{
-			double dJ0=alpha*dV(0)+0.5*alpha*alpha*dV(1);
-			double dJm=dJ/dJ0;
+			dlambda=std::max(dlambda*params.lambdaFactor, params.lambdaFactor);
+			lambda=std::max(lambda*dlambda, params.lambdaMin);
 
-			if(dJm<alpha1)
-				alpha*=dalpha1;
-			else
-				if (dJm>alpha2)
-					alpha*=dalpha2;
-
-			break;
+//			std::cout<<"No step found"<<std::endl;
+//			std::cout<<"lambda: "<<lambda<<std::endl;
+//			std::cout<<"dlambda: "<<dlambda<<std::endl;
+//			std::cout<<"Jn: "<<Jn<<std::endl;
+			
+			if (lambda>params.lambdaMax)
+				break;
 		}
+//		std::cout<<"========================================================================"<<std::endl<<std::endl;
 	}
 
-	list_state0=list_state;
-	list_u0=list_u1;
+	if(us0.capacity()<num)
+	{
+		us0.reserve(num);
+		us0.resize(num,VecN::Zero());
+	}
 
-//	std::cout<<"============================================"<<std::endl;
-//	std::cout<<"J1: "<<J1<<std::endl;
-//	std::cout<<list_state.back().x.transpose()<<std::endl;
-//	std::cout<<"============================================"<<std::endl;
-//	std::cout<<state.g<<std::endl;
-
-	return J1;
+	for(int i=0;i<num;i++)
+		us0[i]=us[i];
 }
 
-template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, std::list<VecN> &list_ku)
+template<typename Robot> void iLQG<Robot>::forwards(std::vector<MatNM> const &  Ks, std::vector<VecN> const & kus,  double const & alpha,
+												         std::vector<State> & xns,          std::vector<U> & uns,        double &    Jn)
 {
+	xns.reserve(num+1);
+	uns.reserve(num);
+	xns.resize(num+1,x0);
+	uns.resize(num,VecN::Zero());
+
+	Jn=0;
+
+	xns[0]=x0;
+
+	VecM dx, err_x;
+
+	for(int i=0;i<num;i++)
+	{
+		dx=Robot::State::diff(xns[i],xs[i]);
+		uns[i]=clamp<N>(us[i]+kus[i]*alpha+Ks[i]*dx,umin,umax);
+
+		err_x=Robot::State::diff(xns[i],xrefs[i]);
+		Jn+=Robot::L(params.Q, params.R, err_x, uns[i])*dt;
+
+		DState dstate(sys,xns[i],uns[i]);
+		xns[i+1]=xns[i].update(dstate,dt);
+	}
+
+	err_x=Robot::State::diff(xns[num],xrefs[num]);
+	Jn+=Robot::L(params.Qf, MatNN::Zero(), err_x, VecN::Zero());
+}
+
+template<typename Robot> int iLQG<Robot>::backwards(std::vector<MatNM> & Ks, std::vector<VecN> & kus, double const & lambda)
+{
+	// Initialization
 	VecM Qx;
 	VecN Qu;
 	MatMM Qxx;
@@ -344,164 +374,112 @@ template<typename Robot> void iLQG<Robot>::backwards(std::list<MatNM> &list_K, s
 
 	VecM error;
 
-	MatMM const & M=params.M;
+	MatMM const & Q=params.Q;
 	MatNN const & R=params.R;
-	MatMM const & Mf=params.Mf;
+	MatMM const & Qf=params.Qf;
 
-	dV=Vec2::Zero();
+	Ks.reserve(num);
+	Ks.resize(num, MatNM::Zero());
+	kus.reserve(num);
+	kus.resize(num,U::Zero());
 	
-	typename std::list<State>::const_reverse_iterator rit_state=list_state0.crbegin();
-	typename std::list<Ref>::const_reverse_iterator rit_ref=list_ref.crbegin();
-	typename std::list<U>::const_reverse_iterator rit_u=list_u0.crbegin();
-
-	error=Robot::State::diff(*rit_state,*rit_ref);
-	Vx=Robot::Lx(Mf,error);
-	Vxx=Robot::Lxx(Mf,error);
+	dJ=Vec2::Zero();
 	
-//	std::cout<<"+++++++++++++++++++++++++++++++++"<<std::endl;
-//	std::cout<<rit_state->g<<std::endl;
-//	std::cout<<rit_ref->g<<std::endl;
-//
-//	rit_state++;
-//	rit_ref++;
-//	std::cout<<rit_state->g<<std::endl;
-//	std::cout<<rit_ref->g<<std::endl;
-//	std::cout<<"+++++++++++++++++++++++++++++++++"<<std::endl;
-
-	list_K.clear();
-	list_ku.clear();
+	// Start back pass
+	error=Robot::State::diff(xs[num],xrefs[num]);
+	
+	Vx=Robot::Lx(Qf,error);
+	Vxx=Robot::Lxx(Qf,error);
 
 	Eigen::LLT<MatNN> llt;
-
-	while(rit_state!=list_state0.crend())
-	{
-		State const &state=*rit_state;
-		U const & u=*rit_u;
-		Ref const & ref=*rit_ref;
-
-		error=Robot::State::diff(*rit_state,*rit_ref);
-		Lx=Robot::Lx(M,error)*dt;
-		Lu=Robot::Lu(R,u)*dt;
-		Lxx=Robot::Lxx(M,error)*dt;
-		Luu=Robot::Luu(R,u)*dt;
-
-		Robot::linearize(sys, dt, state, u, A, B);
 	
-//		std::cout<<A<<std::endl;
-//		std::cout<<B<<std::endl;
+	Mat Hfree;
+	int result;
+	Eigen::Array<int,N,1> free;
+
+	for(int i=num-1;i>=0;i--)
+	{
+		error=Robot::State::diff(xs[i],xrefs[i]);
+
+		Lx=Robot::Lx(Q,error)*dt;
+		Lxx=Robot::Lxx(Q,error)*dt;
+		Lu=Robot::Lu(R,us[i])*dt;
+		Luu=Robot::Luu(R,us[i])*dt;
+
+		Robot::linearize(sys,dt,xs[i],us[i],A,B);
+
 		At=A.transpose();
 		Bt=B.transpose();
 
-
 		Qx=Lx + At*Vx;
 		Qu=Lu + Bt*Vx;
-
-		Qxx=Lxx + At*Vxx*A;
 		Quu=Luu + Bt*Vxx*B;
 		Qux=Bt*Vxx*A;
 		Qxu=Qux.transpose();
+		Qxx=Lxx + At*Vxx*A;
 
-//		std::cout<<Qx.transpose()<<std::endl;
-//		std::cout<<Qu.transpose()<<std::endl;
-//		std::cout<<Qxx<<std::endl;
-//		std::cout<<Qux<<std::endl;
-//		std::cout<<Quu<<std::endl;
+		Quum=Quu+lambda*MatNN::Identity();
 
-		double mu=params.mu;
-		double dmu=1;
-
-		rit_state++;
-		rit_ref++;
-		while(1)
-		{
-			Quum=Quu+mu*MatNN::Identity();
-			llt.compute(Quum);
-			
-			if(llt.info()==Eigen::Success)
-			{
-				dmu=std::min(1/params.dmu0,dmu/params.dmu0);
-				mu=std::max(mu*dmu,params.mumin);
-
-				break;
-			}
-
-			dmu=std::max(params.dmu0, dmu*params.dmu0);
-			mu=std::max(params.mumin,mu*dmu);
-		}
+		llt.compute(Quum);
+		if(llt.info()!=Eigen::Success)
+			return i;
 		
-		if (mu>params.mumax)
-			break;
-		
-//		std::cout<<"mu: "<<mu<<std::endl;
+		U dumin=umin-us[i];
+		U dumax=umax-us[i];
 
 		VecN ku=-llt.solve(Qu);
-		MatNM K=-llt.solve(Qux); 
-
-
-		VecN dumax=umax-u;
-		VecN dumin=umin-u;
-
-		Eigen::Matrix<int,N,1> ku_state=Eigen::Matrix<int,N,1>::Zero();
+		Eigen::Matrix<int,N,1> free;
 		
-		if(box(ku,ku_state,dumin,dumax))
+		if(isbounded(ku,free,dumin,dumax));
+			result=snopt(Quum,Qu,dumin,dumax,ku,free);
+
+//		boxQP<N>(Quum, Qu, dumin, dumax, kus[std::min(i+1,num-1)], ku, Hfree, free, result);
+
+		if(result>=2)
+			return i;
+		
+		MatNM K=MatNM::Zero();
+		if(free.sum()>0)
 		{
-			VecN ku0=ku;
-			Eigen::Matrix<int,N,1> ku_state0;
-			int result=box_opt(Quum, Qu, dumin, dumax, ku0, ku_state0);
-			if(result>=2)
-			{
-				double F=ku.transpose()*(Quum*ku*0.5+Qu);
-				double F0=ku0.transpose()*(Quum*ku0*0.5+Qu);
+			int rows=free.sum();
+			Mat Quuf=select<N>(Quum,free,free);
+			Mat Quxf=Mat::Zero(rows,M);
 
-				if(F0<F)
-				{
-					ku_state=ku_state0;
-					ku=ku0;
-				}
-			}
-			else
-			{
-				ku_state=ku_state0;
-				ku=ku0;
-			}
+			for(int i=0,j=0;i<N && j<rows;i++)
+				if(free(i))
+					Quxf.row(j++)=Qux.row(i);
 
-			for(int i=0;i<N;i++)
-				if(ku_state(i))
-					K.row(i)=Eigen::Matrix<double,1,iLQG<Robot>::M>::Zero();
+			Mat Lfree=-Quuf.ldlt().solve(Quxf);
+
+			for(int i=0, j=0;i<N && j<rows; i++)
+				if(free(i))
+					K.row(i)=Lfree.row(j++);
 		}
-
+		
 		MatMN Kt=K.transpose();
-
-		Vxx=Qxx+Kt*Qux;
-		Vx=Qx+Kt*Qu;
-
-//		Vxx=Qxx+Kt*Quum*K+Kt*Qux+Qxu*K;
-//		Vx=Qx+Kt*(Quum*ku+Qu)+Qxu*ku;
-
-//		std::cout<<K<<std::endl;
-//		std::cout<<ku.transpose()<<std::endl<<std::endl;
-//		std::cout<<Vxx<<std::endl;
-//		std::cout<<Vx.transpose()<<std::endl;
-
 		Eigen::Matrix<double,1,N> kut=ku.transpose();
-		dV+=(Vec2()<<kut*Qu,kut*Quu*ku).finished();
 
-		list_ku.push_front(ku);
-		list_K.push_front(K);
+		dJ+=(Vec2()<<kut*Qu, 0.5*kut*Quu*ku).finished();
 
-		rit_state++;
-		rit_ref++;
-		rit_u++;
 
-		std::cout<<list_ku.size()<<std::endl;
+		Vxx=Qxx+Kt*Qux+Qxu*K+Kt*Quu*K;
+		Vx=Qx+Kt*Qu+Qxu*ku+Kt*Quu*ku;
+
+		kus[i]=ku;
+		Ks[i]=K;
 	}
-	
-//	std::cout<<"size: "<<list_ku.size()<<std::endl;
-}
 
-template<typename Robot> int iLQG<Robot>::box_opt(MatNN const & Quu, VecN const & Qu, VecN const & dumin, VecN const & dumax, VecN & ku, Eigen::Matrix<int,N,1>  & ku_state)
+//	std::cout<<"--------------------------------------------"<<std::endl;
+//	std::cout<<"Backwards"<<std::endl;
+//	std::cout<<"--------------------------------------------"<<std::endl;
+//	for(int i=0;i<num;i++)
+//		std::cout<<"ku["<<i+1<<"]: "<<kus[i].transpose()<<std::endl;
+
+	return -1;
+}
+template<typename Robot> int iLQG<Robot>::snopt(MatNN const & Quu, VecN const & Qu, VecN const & dumin, VecN const & dumax, VecN & ku, Eigen::Matrix<int,N,1>  & free)
 {
-	typename snopt::Params options;
+	typename snOPT<N>::Params options;
 	options.xlow=dumin;
 	options.xupp=dumax;
 
@@ -513,28 +491,32 @@ template<typename Robot> int iLQG<Robot>::box_opt(MatNN const & Quu, VecN const 
 	double Fmul=0;
 	int Fstate=0;
 
-	int result=snopt::fmin(Quu,   Qu, options,
+	int result=snOPT<N>::fmin(Quu,   Qu, options,
 			                 x, xmul,  xstate,
 							 F, Fmul,  Fstate);
 
-	box(x,xstate,options.xlow,options.xupp);
+	isbounded(x,free,options.xlow,options.xupp);
+	
+	VecN grad=Quu*x+Qu;
+
+	for(int i=0;i<Robot::N;i++)
+		free(i)=!((x(i)<=dumin(i) && grad(i)>0) || (x(i)>=dumax(i) && grad(i)<0));
 
 	ku=x;
-	ku_state=xstate;
 
 	return result;
 }
 
-template<typename Robot> bool iLQG<Robot>::box(VecN &x, Eigen::Matrix<int,N,1> & xstate, VecN const & xmin, VecN const & xmax)
+template<typename Robot> bool iLQG<Robot>::isbounded(VecN &x, Eigen::Matrix<int,N,1> & xstate, VecN const & xmin, VecN const & xmax)
 {
 	bool bounded=false;
-	xstate=Eigen::Matrix<int,N,1>::Zero();
+	xstate=Eigen::Matrix<int,N,1>::Ones();
 
 	for(int i=0;i<Robot::N;i++)
 		if(x(i)>xmax(i))
 		{
 			x(i)=xmax(i);
-			xstate(i)=1;
+			xstate(i)=0;
 
 			bounded=true;
 		}
@@ -542,7 +524,7 @@ template<typename Robot> bool iLQG<Robot>::box(VecN &x, Eigen::Matrix<int,N,1> &
 			if(x(i)<xmin(i))
 			{
 				x(i)=xmin(i);
-				xstate(i)=1;
+				xstate(i)=0;
 
 				bounded=true;
 			}

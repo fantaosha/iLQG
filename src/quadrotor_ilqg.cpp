@@ -10,7 +10,7 @@
 #include <quadrotor.hpp>
 #include <iostream>
 
-#include <ddp.hpp>
+#include <ilqg.hpp>
 #include <simulator.hpp>
 
 #include <string>
@@ -106,13 +106,13 @@ int main()
 //	Mf.block(6,6,6,6)=Mf.block(0,0,6,6);
 	Mat12 M=Mf/2;
 	Mat4 R=Mat4::Identity()/50;
-	DDP<quadrotor>::Params params(M,R,Mf);
+	iLQG<quadrotor>::Params params(M,R,Mf);
 
 	// Set up initial state
 	quadrotor::State x0=xrefs[0];
 
-	x0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*3;
-	x0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*1);
+	x0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*30;
+	x0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*3);
 //	x0.g.block(0,0,3,3)*=SO3::exp((Vec3()<<3.14,0,0).finished());
 	x0.v.head(3)-=Vec3::Random().normalized()*0;
 	x0.v.tail(3)-=Vec3::Random().normalized()*0;
@@ -126,7 +126,7 @@ int main()
 	Vec4 umin=-Vec4::Ones()*0;
 	Vec4 umax=Vec4::Ones()*6;
 	
-	DDP<quadrotor> ddp(sys,dt);
+	iLQG<quadrotor> ilqg(sys,dt);
 
 	double ts=0.02;
 	double T=36;
@@ -140,8 +140,8 @@ int main()
 	{
 		timespec T_start, T_end;
 		clock_gettime(CLOCK_MONOTONIC,&T_start);
-		ddp.init(sim.get_state(), us, xrefs, params, umin, umax, 150);
-		ddp.iterate(itr_max,us);
+		ilqg.init(sim.get_state(), us, xrefs, params, umin, umax, 150);
+		ilqg.iterate(itr_max,us);
 		clock_gettime(CLOCK_MONOTONIC,&T_end);
 		std::cout<<"time consumed is "<<(T_end.tv_sec-T_start.tv_sec)+(T_end.tv_nsec-T_start.tv_nsec)/1000000000.0<<"s"<<std::endl;
 	
