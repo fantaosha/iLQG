@@ -18,7 +18,6 @@
 
 int main()
 {
-#ifdef TRACK
 	char file[]="/media/fantaosha/Documents/JHU/Summer 2015/quad_rotor_traj/traj_full_12s_1_small.mat";
 
 	mxArray *mxR;
@@ -43,8 +42,8 @@ int main()
 	void *pvq=mxGetPr(mxvq);
 	void *pU=mxGetPr(mxU);
 
-	std::vector<typename quadrotor::State> xrefs;
-	xrefs.reserve(N/sN+1);
+	std::vector<typename quadrotor::State> xrefs0;
+	xrefs0.reserve(N/sN+1);
 
 	for(int i=0;i<N;i+=sN)
 	{
@@ -58,7 +57,7 @@ int main()
 		memcpy(xq.data(),pxq,sizeof(double)*xq.rows()*xq.cols());
 		memcpy(vq.data(),pvq,sizeof(double)*vq.rows()*vq.cols());
 
-		xrefs.emplace_back(R,xq,w,R.transpose()*vq);
+		xrefs0.emplace_back(R,xq,w,R.transpose()*vq);
 
 		pR+=sizeof(double)*R.rows()*R.cols()*sN;
 		pw+=sizeof(double)*w.rows()*w.cols()*sN;
@@ -68,24 +67,17 @@ int main()
 
 	sN=10;
 
-	std::vector<typename quadrotor::U> us;
-	us.reserve(N/sN+1);
+	std::vector<typename quadrotor::U> us0;
+	us0.reserve(N/sN+1);
 
 	for(int i=0;i<N;i+=sN)
 	{
 		Eigen::Matrix<double,4,1> u;
 		memcpy(u.data(),pU,sizeof(double)*u.rows()*u.cols());
-		us.push_back(u.cwiseProduct(u));
+		us0.push_back(u.cwiseProduct(u));
 		pU+=sizeof(double)*u.rows()*u.cols()*sN;
 	}
-#else
-	quadrotor::State xref;
-	xref.g.block(0,0,3,3)=SO3::exp((Vec3()<<0,0,0).finished());
-	xref.g.block(0,3,3,1)=(Vec3()<<0,0,0).finished();
 
-	std::vector<quadrotor::State> xrefs(4000,xref);
-	std::vector<quadrotor::U> us(4000, Vec4::Zero());
-#endif
 
 	std::srand((unsigned int) time(0));
 	// Set up quadrotor parameters
@@ -107,57 +99,78 @@ int main()
 	Mat12 M=Mf/2;
 	Mat4 R=Mat4::Identity()/50;
 	DDP<quadrotor>::Params params(M,R,Mf);
+	double dt=0.01;
 
 	// Set up initial state
-	quadrotor::State x0=xrefs[0];
 
-	x0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*30;
-//	x0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*3);
-	x0.g.block(0,0,3,3)*=SO3::exp((Vec3()<<3.14,0,0).finished());
-	x0.v.head(3)-=Vec3::Random().normalized()*0;
-	x0.v.tail(3)-=Vec3::Random().normalized()*0;
-	// Set up simulator
-	double dt=0.01;
-	
-	size_t num=200;
-	Sim<quadrotor> sim(sys,dt);
-	sim.init(x0,num);
-
-	Vec4 umin=-Vec4::Ones()*0;
-	Vec4 umax=Vec4::Ones()*6;
-	
-	DDP<quadrotor> ddp(sys,dt);
-
-	double ts=0.02;
-	double T=36;
-	double Tp=1.5;
-	size_t SN=size_t(ts/dt+0.5);
-	size_t ND=size_t(Tp/dt+0.5)+1;
-
-	int sn=2;
-	int itr_max=15;
-	for(int i=0;i<2000;i+=sn)
+	int NUM=10;
+	int succeed=0;
+//#pragma omp parallel for reduction(+:succeed) schedule(dynamic)  
+	for(int n=0;n<NUM;n++)
 	{
-		timespec T_start, T_end;
-		clock_gettime(CLOCK_MONOTONIC,&T_start);
-		ddp.init(sim.get_state(), us, xrefs, params, umin, umax, 150);
-		ddp.iterate(itr_max,us);
-		clock_gettime(CLOCK_MONOTONIC,&T_end);
-		std::cout<<"time consumed is "<<(T_end.tv_sec-T_start.tv_sec)+(T_end.tv_nsec-T_start.tv_nsec)/1000000000.0<<"s"<<std::endl;
-	
-		for(int j=0;j<sn;j++)
-		{
-			sim.update(us.front());
-			xrefs.erase(xrefs.begin());
-			us.erase(us.begin());
-		}
-		Vec12 error=quadrotor::State::diff(sim.get_state(),xrefs[0]);
-		std::cout<<dt*i<<": "<<error.head(3).norm()<<" "<<error.head(6).tail(3).norm()<<std::endl;
+			std::vector<typename quadrotor::State> xrefs=xrefs0;
+			std::vector<typename quadrotor::U> us=us0;
+			quadrotor::State x0=xrefs[0];
 
-		if(error.norm()<5)
-			break;
+			x0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*30;
+			x0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*3);
+		//	x0.g.block(0,0,3,3)*=SO3::exp((Vec3()<<3.14,0,0).finished());
+			x0.v.head(3)-=Vec3::Random().normalized()*0;
+			x0.v.tail(3)-=Vec3::Random().normalized()*0;
+			// Set up simulator
+			
+			Sim<quadrotor> sim(sys,dt);
+			sim.init(x0,4000);
+
+			Vec4 umin=-Vec4::Ones()*0;
+			Vec4 umax=Vec4::Ones()*6;
+			
+			DDP<quadrotor> ddp(sys,dt);
+
+			double ts=0.02;
+			double T=36;
+			double Tp=1.5;
+			size_t SN=size_t(ts/dt+0.5);
+			size_t ND=size_t(Tp/dt+0.5)+1;
+
+#pragma omp critical
+			{
+//				std::cout<<quadrotor::State::diff(sim.get_state(),xrefs[0]).transpose()<<std::endl;
+//				std::cout<<xrefs.size()<<std::endl;
+//				std::cout<<us.size()<<std::endl;
+			}
+
+			int sn=2;
+			int itr_max=15;
+			for(int i=0;i<4000;i+=sn)
+			{
+				timespec T_start, T_end;
+				clock_gettime(CLOCK_MONOTONIC,&T_start);
+				ddp.init(sim.get_state(), us, xrefs, params, umin, umax, 150);
+				ddp.iterate(itr_max,us);
+				clock_gettime(CLOCK_MONOTONIC,&T_end);
+//				std::cout<<"time consumed is "<<(T_end.tv_sec-T_start.tv_sec)+(T_end.tv_nsec-T_start.tv_nsec)/1000000000.0<<"s"<<std::endl;
+			
+				for(int j=0;j<sn;j++)
+				{
+					sim.update(us.front());
+					xrefs.erase(xrefs.begin());
+					us.erase(us.begin());
+				}
+
+				Vec12 error=quadrotor::State::diff(sim.get_state(),xrefs[0]);
+
+				if(error.norm()<5)
+				{
+					succeed++;
+					break;
+				}
+			}
+#pragma omp critical
+			{
+				std::cout<<quadrotor::State::diff(sim.get_state(),xrefs[0]).transpose()<<std::endl;
+			}
 	}
-
-	sim.save("/media/fantaosha/Documents/JHU/Summer 2015/results/quadrotor_ddp.mat");
-
+	
+	std::cout<<succeed<<" "<<NUM<<std::endl;
 }

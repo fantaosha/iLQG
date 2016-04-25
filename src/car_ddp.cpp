@@ -16,7 +16,7 @@ int main()
 	double dt=0.01;
 	double N=800;
 
-	Vec5 x0=(Vec5()<<3,3,4.5,0,0).finished();
+	Vec5 x0=(Vec5()<<0,5,0,0,0).finished();
 	car::State state0(x0);
 	car::State xref(Vec5::Zero());
 
