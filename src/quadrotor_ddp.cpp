@@ -112,8 +112,8 @@ int main()
 	quadrotor::State x0=xrefs[0];
 
 	x0.g.block(0,3,3,1)-=(Vec3::Random()).normalized()*30;
-//	x0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*3);
-	x0.g.block(0,0,3,3)*=SO3::exp((Vec3()<<3.14,0,0).finished());
+	x0.g.block(0,0,3,3)*=SO3::exp(Vec3::Random().normalized()*3);
+//	x0.g.block(0,0,3,3)*=SO3::exp((Vec3()<<3.14,0,0).finished());
 	x0.v.head(3)-=Vec3::Random().normalized()*0;
 	x0.v.tail(3)-=Vec3::Random().normalized()*0;
 	// Set up simulator
@@ -135,7 +135,7 @@ int main()
 	size_t ND=size_t(Tp/dt+0.5)+1;
 
 	int sn=2;
-	int itr_max=15;
+	int itr_max=10;
 	for(int i=0;i<2000;i+=sn)
 	{
 		timespec T_start, T_end;
